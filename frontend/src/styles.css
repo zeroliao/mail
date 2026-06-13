@@ -1,0 +1,107 @@
+:root {
+  color-scheme: light;
+  font-family: "Segoe UI", "PingFang SC", sans-serif;
+  line-height: 1.5;
+  color: #14213d;
+  background:
+    radial-gradient(circle at top left, rgba(244, 162, 97, 0.45), transparent 35%),
+    linear-gradient(135deg, #f7ede2 0%, #f1faee 45%, #e0fbfc 100%);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+}
+
+.page {
+  min-height: 100vh;
+  padding: 48px 20px 64px;
+}
+
+.hero {
+  max-width: 760px;
+  margin: 0 auto 32px;
+}
+
+.eyebrow {
+  margin: 0 0 8px;
+  font-size: 0.875rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: #8d5a2b;
+}
+
+.hero h1 {
+  margin: 0;
+  font-size: clamp(2.6rem, 6vw, 4.5rem);
+}
+
+.summary {
+  max-width: 700px;
+  margin-top: 16px;
+  font-size: 1.05rem;
+}
+
+.grid {
+  max-width: 1100px;
+  margin: 0 auto;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 20px;
+}
+
+.card {
+  padding: 24px;
+  border: 1px solid rgba(20, 33, 61, 0.12);
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.82);
+  backdrop-filter: blur(12px);
+  box-shadow: 0 20px 60px rgba(20, 33, 61, 0.08);
+}
+
+.card h2 {
+  margin-top: 0;
+}
+
+.status-list {
+  margin: 0;
+  display: grid;
+  gap: 12px;
+}
+
+.status-list div {
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: rgba(20, 33, 61, 0.05);
+}
+
+.status-list dt {
+  font-weight: 700;
+}
+
+.status-list dd {
+  margin: 4px 0 0;
+}
+
+.error {
+  color: #9b2226;
+}
+
+ul {
+  margin: 0;
+  padding-left: 18px;
+}
+
+@media (max-width: 640px) {
+  .page {
+    padding-top: 32px;
+  }
+
+  .card {
+    padding: 20px;
+  }
+}
