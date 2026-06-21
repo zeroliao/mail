@@ -1,0 +1,110 @@
+{
+  "ok": true,
+  "hostKind": "desktop",
+  "requestId": "01KV5V6YAH1VEVVJS1G5X9H853",
+  "result": {
+    "status": "ok",
+    "message": "roadmap read",
+    "data": {
+      "workspaceId": "64f7c3806096150010d755465340c2a69f941711c97fde549df9c23b38e39f73",
+      "workspacePath": "C:\\Users\\Administrator\\Desktop\\code\\team",
+      "conversationId": null,
+      "roadmap": {
+        "objective": "邮箱账号管理系统 — 前后端联调 + QA 验收",
+        "tasks": [
+          {
+            "id": 1,
+            "number": "01",
+            "title": "任务01-04：基础架构与核心功能实现",
+            "pinned": false,
+            "status": "done",
+            "sortOrder": 1
+          },
+          {
+            "id": 2,
+            "number": "05",
+            "title": "任务05-08：UI/UX 优化与账号管理",
+            "pinned": false,
+            "status": "done",
+            "sortOrder": 2
+          },
+          {
+            "id": 3,
+            "number": "09",
+            "title": "任务09：前后端联调审计（分页修复 + Unified Inbox 端点修复）",
+            "pinned": false,
+            "status": "done",
+            "sortOrder": 3
+          },
+          {
+            "id": 4,
+            "number": "10",
+            "title": "任务10：QA ready-now 执行完成（3 pass / 4 blocked-无账号数据）",
+            "pinned": false,
+            "status": "done",
+            "sortOrder": 4
+          },
+          {
+            "id": 5,
+            "number": "11",
+            "title": "端口冲突解决：后端已从 3000 迁移至 3002",
+            "pinned": false,
+            "status": "done",
+            "sortOrder": 5
+          },
+          {
+            "id": 6,
+            "number": "12",
+            "title": "Gmail OAuth 解锁：需 owner 在 Google Cloud Console 放行 localhost:3002 redirect URI",
+            "pinned": true,
+            "status": "in-progress",
+            "sortOrder": 6
+          },
+          {
+            "id": 7,
+            "number": "13",
+            "title": "Microsoft OAuth confidential 分支：等待 owner 提供 CLIENT_ID/SECRET（可选，非阻塞）",
+            "pinned": false,
+            "status": "pending",
+            "sortOrder": 7
+          },
+          {
+            "id": 8,
+            "number": "14",
+            "title": "Task#14 Microsoft OAuth 分支：refresh_token+client_id 直连入池（bind-oauth 单个/批量）— 后端已实现，supervisor 独立复核验收通过",
+            "pinned": false,
+            "status": "done",
+            "sortOrder": 8
+          },
+          {
+            "id": 9,
+            "number": "16",
+            "title": "Task#16 前端『Token 直连导入』入口：email/clientId/refreshToken(+可选 displayName/scope)，支持批量粘贴，逐条展示成功/失败，调用 bind-oauth 与 bind-oauth/batch — 前端工程师执行中",
+            "pinned": true,
+            "status": "in-progress",
+            "sortOrder": 9
+          },
+          {
+            "id": 10,
+            "number": "16b",
+            "title": "质量与风险总+supervisor 安全面复核：通过可发布；后端已按建议收敛错误体（对外仅 error+error_description，剥离 trace_id/correlation_id/timestamp），tsc 0 + 测试 8/8 含最小化断言",
+            "pinned": false,
+            "status": "done",
+            "sortOrder": 10
+          },
+          {
+            "id": 11,
+            "number": "17",
+            "title": "Task#17 真实账号端到端（bind→收→发）：等 owner 账号 AADSTS70000 风控冷却解除后再跑，期间勿高频试探",
+            "pinned": true,
+            "status": "pending",
+            "sortOrder": 11
+          }
+        ]
+      },
+      "source": "workspace",
+      "warning": null
+    }
+  },
+  "error": null
+}

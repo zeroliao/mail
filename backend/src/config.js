@@ -27,11 +27,30 @@ function parseOrigins(value) {
     .filter(Boolean);
 }
 
+function parseTrustProxy(value) {
+  if (value === undefined || value === null || value === "") {
+    return 1;
+  }
+
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    if (["false", "off", "no"].includes(normalized)) {
+      return false;
+    }
+    if (["true", "on", "yes"].includes(normalized)) {
+      return 1;
+    }
+  }
+
+  const numericValue = Number(value);
+  return Number.isInteger(numericValue) ? numericValue : value;
+}
+
 const config = {
   appName: process.env.APP_NAME || "Mail Account Manager",
   nodeEnv: process.env.NODE_ENV || "development",
   port: parseNumber(process.env.BACKEND_PORT || process.env.PORT, 3000),
-  trustProxy: parseBoolean(process.env.TRUST_PROXY, true),
+  trustProxy: parseTrustProxy(process.env.TRUST_PROXY),
   corsOrigins: parseOrigins(process.env.CORS_ORIGIN),
   rateLimitWindowMs: parseNumber(process.env.RATE_LIMIT_WINDOW_MS, 15 * 60 * 1000),
   rateLimitMaxRequests: parseNumber(process.env.RATE_LIMIT_MAX_REQUESTS, 100),
@@ -56,5 +75,6 @@ module.exports = {
   config,
   parseBoolean,
   parseNumber,
-  parseOrigins
+  parseOrigins,
+  parseTrustProxy
 };

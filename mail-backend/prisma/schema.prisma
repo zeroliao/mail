@@ -1,0 +1,101 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Get a free hosted Postgres database in seconds: `npx create-db`
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+enum MailProvider {
+  GOOGLE
+  MICROSOFT
+}
+
+enum AccountStatus {
+  ACTIVE
+  DISCONNECTED
+  ERROR
+  ARCHIVED
+}
+
+model Account {
+  id           String        @id @default(cuid())
+  provider     MailProvider
+  email        String
+  displayName  String?
+  status       AccountStatus @default(ACTIVE)
+  accessToken  String
+  refreshToken String?
+  tokenType    String?
+  scope        String
+  expiresAt    DateTime?
+  lastSyncAt   DateTime?
+  metadata     Json?
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+  deletedAt    DateTime?
+  messages     MailMessage[]
+
+  @@unique([provider, email])
+}
+
+model OAuthState {
+  id          String       @id @default(cuid())
+  provider    MailProvider
+  state       String       @unique
+  redirectUri String
+  metadata    Json?
+  expiresAt   DateTime
+  createdAt   DateTime     @default(now())
+}
+
+model MailMessage {
+  id                String       @id @default(cuid())
+  accountId         String
+  providerMessageId String
+  threadId          String?
+  folder            String?
+  subject           String?
+  snippet           String?
+  fromAddress       Json?
+  toAddresses       Json?
+  ccAddresses       Json?
+  bccAddresses      Json?
+  bodyText          String?
+  bodyHtml          String?
+  receivedAt        DateTime?
+  sentAt            DateTime?
+  isRead            Boolean      @default(false)
+  isFlagged         Boolean      @default(false)
+  hasAttachments    Boolean      @default(false)
+  rawPayload        Json?
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
+  account           Account      @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  attachments       Attachment[]
+
+  @@unique([accountId, providerMessageId])
+  @@index([accountId, receivedAt])
+}
+
+model Attachment {
+  id                 String      @id @default(cuid())
+  mailMessageId      String
+  providerAttachmentId String?
+  filename           String
+  mimeType           String?
+  size               Int?
+  contentId          String?
+  isInline           Boolean     @default(false)
+  storageKey         String?
+  createdAt          DateTime    @default(now())
+  mailMessage        MailMessage @relation(fields: [mailMessageId], references: [id], onDelete: Cascade)
+
+  @@index([mailMessageId])
+}

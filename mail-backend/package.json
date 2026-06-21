@@ -1,0 +1,41 @@
+{
+  "name": "mail-backend",
+  "version": "1.0.0",
+  "description": "Multi-provider mailbox management backend with Gmail and Microsoft Graph integration.",
+  "main": "dist/server.js",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/server.js",
+    "prisma:generate": "prisma generate",
+    "prisma:migrate": "prisma migrate dev",
+    "prisma:deploy": "prisma migrate deploy",
+    "validate": "npm run prisma:generate && npm run build"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "@fastify/cors": "^11.2.0",
+    "@fastify/jwt": "^10.1.0",
+    "@fastify/swagger": "^9.7.0",
+    "@fastify/swagger-ui": "^6.0.0",
+    "@prisma/client": "^6.16.0",
+    "dotenv": "^17.4.2",
+    "fastify": "^5.8.5",
+    "googleapis": "^173.0.0",
+    "imapflow": "^1.4.0",
+    "mailparser": "^3.9.9",
+    "nodemailer": "^8.0.11",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/mailparser": "^3.4.6",
+    "@types/node": "^25.9.3",
+    "@types/nodemailer": "^8.0.1",
+    "prisma": "^6.16.0",
+    "tsx": "^4.22.4",
+    "typescript": "^6.0.3"
+  }
+}

@@ -4,6 +4,7 @@ const request = require("supertest");
 
 process.env.SKIP_DB_HEALTHCHECK = "true";
 process.env.CORS_ORIGIN = "http://localhost:8080";
+process.env.TRUST_PROXY = "0";
 
 const { createApp } = require("../src/app");
 

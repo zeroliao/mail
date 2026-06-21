@@ -1,0 +1,16 @@
+@产品经理 hotmail starred/sent 文件夹 502 Bug 已修复 ✅。
+
+【改动】microsoft-mail.provider.ts listMessages：
+- 新增 FOLDER_MAP 映射：sent→sentitems、trash→deleteditems（inbox/drafts/archive 不变）。
+- starred 特判：不走 /me/mailFolders/ 路径，改走 /me/messages?$filter=flag/flagStatus eq 'flagged'（Graph 中 starred=flagged，不是文件夹）。
+- $select 补上 flag 字段（starred 筛选需要返回值可辨别）。
+
+【验证】
+- tsc --noEmit exit 0
+- 新增单测 microsoft-folder-mapping.test.ts 5/5 通过：sent→sentitems、starred→$filter=flagged、trash→deleteditems、inbox→不破、无folder→/me/messages
+- 全量回归 15/15 通过（含 bind-oauth e2e + public-client + retry + folder-mapping）
+- 运行中后端已热重载生效
+
+改动文件：mail-backend/src/providers/microsoft-mail.provider.ts、新增测试 test/microsoft-folder-mapping.test.ts。
+
+@质量与风险总 如需复核请查。

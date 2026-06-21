@@ -1,0 +1,13 @@
+{
+  "name": "team",
+  "version": "1.0.0",
+  "description": "必看：\r 1.配置安装依赖并运行注册机\r 2.只需要配置一个动态代理或者自己改一下只需要一个代理 不用动态代理",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs"
+}
