@@ -4,7 +4,7 @@ on:
   push:
     branches:
       - main
-      - master
+      - develop
   pull_request:
 
 jobs:
@@ -18,30 +18,30 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
           cache-dependency-path: |
-            backend/package-lock.json
+            mail-backend/package-lock.json
             frontend/package-lock.json
 
       - name: Install backend dependencies
-        working-directory: backend
+        working-directory: mail-backend
         run: npm ci
 
       - name: Install frontend dependencies
         working-directory: frontend
         run: npm ci
 
-      - name: Lint backend
-        working-directory: backend
-        run: npm run lint
+      - name: Typecheck backend
+        working-directory: mail-backend
+        run: npm run typecheck
 
       - name: Lint frontend
         working-directory: frontend
         run: npm run lint
 
       - name: Test backend
-        working-directory: backend
+        working-directory: mail-backend
         run: npm test
 
       - name: Test frontend
@@ -50,6 +50,10 @@ jobs:
 
       - name: Build frontend
         working-directory: frontend
+        run: npm run build
+
+      - name: Build backend
+        working-directory: mail-backend
         run: npm run build
 
       - name: Build Docker images

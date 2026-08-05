@@ -1,4 +1,9 @@
-import { BoldOutlined, ItalicOutlined, LinkOutlined, OrderedListOutlined } from "@ant-design/icons";
+import {
+  BoldOutlined,
+  ItalicOutlined,
+  LinkOutlined,
+  UnorderedListOutlined,
+} from "@ant-design/icons";
 import { Button, Tooltip } from "antd";
 import { useEffect, useRef } from "react";
 
@@ -9,7 +14,10 @@ type RichTextEditorProps = {
 
 type EditorCommand = "bold" | "italic" | "insertUnorderedList" | "createLink";
 
-export default function RichTextEditor({ value, onChange }: RichTextEditorProps) {
+export default function RichTextEditor({
+  value,
+  onChange,
+}: RichTextEditorProps) {
   const editorRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -38,22 +46,41 @@ export default function RichTextEditor({ value, onChange }: RichTextEditorProps)
     <div className="editor-frame">
       <div className="editor-toolbar">
         <Tooltip title="加粗">
-          <Button icon={<BoldOutlined />} onClick={() => runCommand("bold")} />
+          <Button
+            aria-label="加粗"
+            icon={<BoldOutlined />}
+            onClick={() => runCommand("bold")}
+          />
         </Tooltip>
         <Tooltip title="斜体">
-          <Button icon={<ItalicOutlined />} onClick={() => runCommand("italic")} />
+          <Button
+            aria-label="斜体"
+            icon={<ItalicOutlined />}
+            onClick={() => runCommand("italic")}
+          />
         </Tooltip>
         <Tooltip title="无序列表">
-          <Button icon={<OrderedListOutlined />} onClick={() => runCommand("insertUnorderedList")} />
+          <Button
+            aria-label="无序列表"
+            icon={<UnorderedListOutlined />}
+            onClick={() => runCommand("insertUnorderedList")}
+          />
         </Tooltip>
         <Tooltip title="插入链接">
-          <Button icon={<LinkOutlined />} onClick={() => runCommand("createLink")} />
+          <Button
+            aria-label="插入链接"
+            icon={<LinkOutlined />}
+            onClick={() => runCommand("createLink")}
+          />
         </Tooltip>
       </div>
       <div
         ref={editorRef}
         className="editor-surface"
         contentEditable
+        role="textbox"
+        aria-label="邮件正文"
+        aria-multiline="true"
         suppressContentEditableWarning
         onInput={() => onChange(editorRef.current?.innerHTML ?? "")}
       />

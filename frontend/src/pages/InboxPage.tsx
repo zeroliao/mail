@@ -1,5 +1,7 @@
 import {
   ClockCircleOutlined,
+  CopyOutlined,
+  EditOutlined,
   EyeInvisibleOutlined,
   FlagFilled,
   FolderOpenOutlined,
@@ -8,27 +10,38 @@ import {
   ReloadOutlined,
   RollbackOutlined,
   SendOutlined,
-  SettingOutlined
+  StarOutlined,
+  TagOutlined,
 } from "@ant-design/icons";
 import {
   App,
+  Alert,
+  Avatar,
   Button,
   Drawer,
   Empty,
   Grid,
   Pagination,
+  Select,
   Skeleton,
   Space,
   Tag,
-  Typography
+  Tooltip,
 } from "antd";
 import dayjs from "dayjs";
-import { useEffect, useMemo } from "react";
+import type React from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
+import AccountLabelEditor from "../components/AccountLabelEditor";
 import HtmlMailViewer from "../components/HtmlMailViewer";
 import { ALL_ACCOUNTS_ID } from "../services/mockData";
 import { useMailAppStore } from "../store/useMailAppStore";
 import type { FolderKey, MailDetail } from "../types/mail";
+import {
+  accountMatchesLabels,
+  getReusableAccountLabels,
+} from "../utils/accountLabels";
+import { extractVerificationCode } from "../utils/verificationCode";
 
 const { useBreakpoint } = Grid;
 
@@ -37,64 +50,127 @@ const folderLabels: Record<FolderKey, string> = {
   starred: "已标星",
   sent: "已发送",
   drafts: "草稿",
-  archive: "归档"
+  archive: "归档",
 };
 
-const secondaryNavItems = [
-  { key: "scheduled", label: "定时发送", icon: <ClockCircleOutlined /> },
-  { key: "attachments", label: "附件", icon: <PaperClipOutlined /> },
-  { key: "settings", label: "设置", icon: <SettingOutlined /> }
-];
+const folderIcons: Record<FolderKey, React.ReactNode> = {
+  inbox: <InboxOutlined />,
+  starred: <StarOutlined />,
+  sent: <SendOutlined />,
+  drafts: <EditOutlined />,
+  archive: <FolderOpenOutlined />,
+};
 
-function getProviderTone(providerLabel: string) {
-  if (providerLabel.includes("Gmail")) return "#2563EB";
-  if (providerLabel.includes("Hotmail")) return "#F59E0B";
-  return "#0F766E";
-}
+const toPlainPreview = (value: string) => {
+  const parsed = new DOMParser().parseFromString(value, "text/html");
+  return (parsed.body.textContent ?? value).replace(/\s+/g, " ").trim();
+};
 
 function DetailContent({
   message,
   onReply,
-  onForward
+  onForward,
 }: {
   message: MailDetail;
   onReply: () => Promise<void>;
   onForward: () => Promise<void>;
 }) {
+  const { message: toast } = App.useApp();
+  const [isCopyingCode, setIsCopyingCode] = useState(false);
+  const verificationCode = extractVerificationCode([
+    message.subject,
+    message.bodyType === "html" ? message.htmlBody : message.textBody,
+    message.preview,
+  ]);
+
+  const copyVerificationCode = async () => {
+    if (!verificationCode || isCopyingCode) return;
+
+    setIsCopyingCode(true);
+    try {
+      await navigator.clipboard.writeText(verificationCode);
+      toast.success(`验证码 ${verificationCode} 已复制`);
+    } catch {
+      toast.error("复制失败，请检查浏览器剪贴板权限");
+    } finally {
+      setIsCopyingCode(false);
+    }
+  };
+
   return (
     <div className="detail-scroll">
       <div className="detail-header">
-        <Space wrap>
-          <Tag color="processing">{message.providerLabel}</Tag>
-          <Tag color="blue">{message.accountDisplayName}</Tag>
-          <Tag>{folderLabels[message.folder]}</Tag>
-          {message.hasHtml ? <Tag>HTML</Tag> : <Tag>纯文本</Tag>}
-        </Space>
+        <div className="detail-heading-row">
+          <div className="detail-heading-copy">
+            <Space wrap size={6}>
+              <Tag color="blue">{message.accountDisplayName}</Tag>
+              <Tag>{message.providerLabel}</Tag>
+              {message.attachments ? (
+                <Tag icon={<PaperClipOutlined />}>{message.attachments}</Tag>
+              ) : null}
+            </Space>
+            <h3>{message.subject}</h3>
+          </div>
 
-        <h3>{message.subject}</h3>
+          <div className="detail-actions">
+            <Button
+              type="primary"
+              icon={<RollbackOutlined />}
+              onClick={() => void onReply()}
+            >
+              回复
+            </Button>
+            <Button icon={<SendOutlined />} onClick={() => void onForward()}>
+              转发
+            </Button>
+          </div>
+        </div>
+
+        {verificationCode ? (
+          <div
+            className="verification-code-bar"
+            aria-label={`识别到验证码 ${verificationCode}`}
+          >
+            <div className="verification-code-copy">
+              <span>验证码</span>
+              <strong>{verificationCode}</strong>
+            </div>
+            <Button
+              className="copy-code-button"
+              icon={<CopyOutlined />}
+              loading={isCopyingCode}
+              type="primary"
+              onClick={() => void copyVerificationCode()}
+            >
+              复制验证码
+            </Button>
+          </div>
+        ) : null}
+
+        <div className="sender-row">
+          <Avatar>
+            {message.fromName.trim().charAt(0).toUpperCase() || "M"}
+          </Avatar>
+          <div className="sender-copy">
+            <strong>{message.fromName}</strong>
+            <span>{message.fromEmail}</span>
+          </div>
+          <time dateTime={message.receivedAt}>
+            {dayjs(message.receivedAt).format("YYYY-MM-DD HH:mm")}
+          </time>
+        </div>
 
         <div className="detail-meta">
           <span>
-            发件人: {message.fromName} &lt;{message.fromEmail}&gt;
+            <strong>收件人</strong>
+            {message.to.join(", ")}
           </span>
-          <span>收件人: {message.to.join(", ")}</span>
-          {message.cc.length ? <span>抄送: {message.cc.join(", ")}</span> : null}
-          <span>时间: {dayjs(message.receivedAt).format("YYYY-MM-DD HH:mm")}</span>
-        </div>
-
-        <div className="detail-actions">
-          <Button type="primary" icon={<RollbackOutlined />} onClick={() => void onReply()}>
-            回复
-          </Button>
-          <Button icon={<SendOutlined />} onClick={() => void onForward()}>
-            转发
-          </Button>
-          <Button disabled>归档</Button>
-          <Button danger ghost disabled>
-            删除
-          </Button>
-          <Button disabled>上一封</Button>
-          <Button disabled>下一封</Button>
+          {message.cc.length ? (
+            <span>
+              <strong>抄送</strong>
+              {message.cc.join(", ")}
+            </span>
+          ) : null}
         </div>
       </div>
 
@@ -108,6 +184,7 @@ export default function InboxPage() {
   const screens = useBreakpoint();
   const navigate = useNavigate();
   const { messageId } = useParams();
+  const [labelFilter, setLabelFilter] = useState<string[]>([]);
   const {
     accounts,
     activeAccountId,
@@ -120,24 +197,46 @@ export default function InboxPage() {
     mailPagination,
     isLoadingMessages,
     isLoadingMessageDetail,
+    messageDetailError,
     selectAccount,
     selectFolder,
     changePage,
     openMessage,
     prepareReply,
     prepareForward,
-    refreshMailbox
+    refreshMailbox,
+    updateAccountLabels,
   } = useMailAppStore();
 
   useEffect(() => {
-    if (!messages.length) return;
-    const nextMessageId = messageId ?? messages[0]?.id;
-    if (!nextMessageId) return;
-    const candidate = messages.find((item) => item.id === nextMessageId);
-    void openMessage(nextMessageId, candidate?.accountId);
+    if (!messageId) return;
+    const candidate = messages.find((item) => item.id === messageId);
+    void openMessage(messageId, candidate?.accountId);
   }, [messageId, messages, openMessage]);
 
-  const activeAccount = accounts.find((account) => account.id === activeAccountId);
+  const activeAccount = accounts.find(
+    (account) => account.id === activeAccountId,
+  );
+  const reusableLabels = useMemo(
+    () => getReusableAccountLabels(accounts),
+    [accounts],
+  );
+  const labelScopedAccounts = useMemo(
+    () =>
+      accounts.filter((account) => accountMatchesLabels(account, labelFilter)),
+    [accounts, labelFilter],
+  );
+
+  useEffect(() => {
+    if (
+      activeAccountId !== ALL_ACCOUNTS_ID &&
+      activeAccount &&
+      !accountMatchesLabels(activeAccount, labelFilter)
+    ) {
+      void selectAccount(ALL_ACCOUNTS_ID);
+    }
+  }, [activeAccount, activeAccountId, labelFilter, selectAccount]);
+
   const visibleMessages = useMemo(
     () =>
       messages.filter((item) => {
@@ -154,12 +253,30 @@ export default function InboxPage() {
           (quickFilter === "starred" && item.flagged) ||
           (quickFilter === "attachments" && item.attachments > 0);
 
-        return matchesQuery && matchesFilter;
+        const messageAccount = accounts.find(
+          (account) => account.id === item.accountId,
+        );
+        const matchesAccountLabels =
+          !labelFilter.length ||
+          Boolean(
+            messageAccount && accountMatchesLabels(messageAccount, labelFilter),
+          );
+
+        return matchesQuery && matchesFilter && matchesAccountLabels;
       }),
-    [messages, quickFilter, searchQuery]
+    [accounts, labelFilter, messages, quickFilter, searchQuery],
   );
 
   const showDrawerDetail = !screens.xl;
+  const detailTargetId = messageId ?? messages[0]?.id;
+  const detailTargetAccountId = messages.find(
+    (item) => item.id === detailTargetId,
+  )?.accountId;
+
+  const retryDetail = () => {
+    if (!detailTargetId) return;
+    void openMessage(detailTargetId, detailTargetAccountId);
+  };
 
   const handleReply = async () => {
     if (!selectedMessage) {
@@ -180,159 +297,203 @@ export default function InboxPage() {
   };
 
   return (
-    <section className="page-grid">
-      <div className="metric-row">
-        <article className="metric-card">
-          <p>活跃账户</p>
-          <strong>{accounts.length}</strong>
-        </article>
-        <article className="metric-card">
-          <p>未读邮件</p>
-          <strong>{accounts.reduce((sum, account) => sum + account.unreadCount, 0)}</strong>
-        </article>
-        <article className="metric-card">
-          <p>当前范围</p>
-          <strong>{activeAccountId === ALL_ACCOUNTS_ID ? "统一收件箱" : activeAccount?.displayName || "单个账户"}</strong>
-        </article>
-        <article className="metric-card">
-          <p>可见邮件</p>
-          <strong>{visibleMessages.length}</strong>
-        </article>
-      </div>
-
-      <div className="workspace-grid">
-        <article className="surface-card sidebar-panel">
-          <div className="card-title-row">
-            <div>
-              <h3>账户</h3>
-              <p>切换统一收件箱或单账户工作区。</p>
-            </div>
-            <Button icon={<ReloadOutlined />} onClick={() => void refreshMailbox()}>
-              刷新
-            </Button>
+    <section className="mail-workspace" aria-label="邮件工作区">
+      <aside className="mail-nav-panel">
+        <div className="panel-heading compact">
+          <div>
+            <span className="section-label">邮件范围</span>
+            <h3>邮箱</h3>
           </div>
+          <Tooltip title="刷新当前邮箱">
+            <Button
+              aria-label="刷新当前邮箱"
+              icon={<ReloadOutlined />}
+              loading={isLoadingMessages}
+              type="text"
+              onClick={() => void refreshMailbox()}
+            />
+          </Tooltip>
+        </div>
 
-          <Button
-            block
-            className={`all-accounts-button ${activeAccountId === ALL_ACCOUNTS_ID ? "active" : ""}`}
-            icon={<InboxOutlined />}
-            onClick={() => void selectAccount(ALL_ACCOUNTS_ID)}
-          >
-            统一收件箱
-          </Button>
+        <Button
+          block
+          className={`all-accounts-button ${activeAccountId === ALL_ACCOUNTS_ID ? "active" : ""}`}
+          icon={<InboxOutlined />}
+          onClick={() => void selectAccount(ALL_ACCOUNTS_ID)}
+        >
+          <span>统一收件箱</span>
+          <span className="nav-count">
+            {accounts.reduce((sum, account) => sum + account.unreadCount, 0)}
+          </span>
+        </Button>
 
-          <Space direction="vertical" style={{ width: "100%" }}>
-            {accounts.map((account) => (
-              <button
-                key={account.id}
-                className={`account-pill ${account.id === activeAccountId ? "active" : ""}`}
-                onClick={() => void selectAccount(account.id)}
-                style={{ borderLeft: `4px solid ${getProviderTone(account.providerLabel)}` }}
-                type="button"
-              >
-                <div className="account-pill-title">
-                  <Typography.Text strong>{account.displayName}</Typography.Text>
-                  <Tag color={account.status === "connected" ? "green" : "orange"}>
-                    {account.status === "connected" ? account.unreadCount : "sync"}
-                  </Tag>
-                </div>
-                <div>{account.email}</div>
-                <small>{account.providerLabel}</small>
-              </button>
-            ))}
-          </Space>
-
-          <div className="card-title-row" style={{ marginTop: 22 }}>
-            <div>
-              <h4>文件夹</h4>
-              <p>{activeAccountId === ALL_ACCOUNTS_ID ? "全部已连接账户" : activeAccount?.email ?? "请选择账户"}</p>
-            </div>
-          </div>
-
-          <Space direction="vertical" className="folder-menu" style={{ width: "100%" }}>
+        <div className="mail-nav-section">
+          <span className="section-label">文件夹</span>
+          <nav className="folder-menu" aria-label="邮件文件夹">
             {(Object.keys(folderLabels) as FolderKey[]).map((folder) => (
               <Button
+                block
+                className={folder === activeFolder ? "active" : ""}
+                icon={folderIcons[folder]}
                 key={folder}
-                type={folder === activeFolder ? "primary" : "default"}
-                icon={<FolderOpenOutlined />}
-                style={{ justifyContent: "space-between" }}
+                type="text"
                 onClick={() => void selectFolder(folder)}
               >
-                {folderLabels[folder]} ({folderCounts[folder] ?? 0})
+                <span>{folderLabels[folder]}</span>
+                <span className="nav-count">{folderCounts[folder] ?? 0}</span>
               </Button>
             ))}
-          </Space>
+          </nav>
+        </div>
 
-          <div className="card-title-row" style={{ marginTop: 22 }}>
-            <div>
-              <h4>工作区</h4>
-              <p>定时发送、附件管理及设置功能。</p>
+        <div className="mail-nav-section account-scope">
+          <label className="section-label" htmlFor="account-label-filter">
+            标签筛选
+          </label>
+          <Select
+            allowClear
+            id="account-label-filter"
+            maxTagCount="responsive"
+            mode="multiple"
+            options={reusableLabels.map((label) => ({ label, value: label }))}
+            placeholder="全部标签"
+            suffixIcon={<TagOutlined />}
+            value={labelFilter}
+            onChange={setLabelFilter}
+          />
+          <label
+            className="section-label account-select-label"
+            htmlFor="account-scope-select"
+          >
+            账户范围
+          </label>
+          <Select
+            id="account-scope-select"
+            showSearch
+            optionFilterProp="label"
+            value={activeAccountId}
+            options={[
+              {
+                label: labelFilter.length
+                  ? `标签范围内 ${labelScopedAccounts.length} 个账户`
+                  : "全部可用账户",
+                value: ALL_ACCOUNTS_ID,
+              },
+              ...labelScopedAccounts.map((account) => ({
+                label: account.email,
+                value: account.id,
+              })),
+            ]}
+            onChange={(value) => void selectAccount(value)}
+          />
+          <p className="account-scope-meta">
+            {activeAccountId === ALL_ACCOUNTS_ID
+              ? `${labelScopedAccounts.length} 个账户纳入当前收件范围`
+              : `${activeAccount?.providerLabel ?? "邮箱"} · ${activeAccount?.status === "connected" ? "账号可用" : "需要处理"}`}
+          </p>
+          {activeAccount ? (
+            <div className="inbox-account-labels">
+              <span className="section-label">账号标签</span>
+              <AccountLabelEditor
+                compact
+                accountEmail={activeAccount.email}
+                availableLabels={reusableLabels}
+                labels={activeAccount.labels}
+                onChange={(labels) =>
+                  updateAccountLabels(activeAccount.id, labels)
+                }
+              />
             </div>
-          </div>
-
-          <Space direction="vertical" style={{ width: "100%" }}>
-            {secondaryNavItems.map((item) => (
-              <Button key={item.key} block disabled icon={item.icon}>
-                {item.label}
-              </Button>
-            ))}
-          </Space>
-        </article>
-
-        <article className="surface-card list-panel">
-          <div className="card-title-row">
-            <div>
-              <h3>邮件列表</h3>
-              <p>
-                {activeAccountId === ALL_ACCOUNTS_ID
-                  ? `全部账户 • ${folderLabels[activeFolder]}`
-                  : activeAccount
-                    ? `${activeAccount.email} • ${folderLabels[activeFolder]}`
-                    : "无活跃账户"}
-              </p>
-            </div>
-            <Space wrap>
-              <Tag icon={<ClockCircleOutlined />}>{mailPagination.total} 封</Tag>
-              <Tag>{visibleMessages.length} 可见</Tag>
-            </Space>
-          </div>
-
-          {isLoadingMessages ? <Skeleton active paragraph={{ rows: 6 }} /> : null}
-          {!isLoadingMessages && !accounts.length ? (
-            <Empty description="尚未绑定账户，请先登录并连接邮箱。" />
           ) : null}
-          {!isLoadingMessages && accounts.length > 0 && !visibleMessages.length ? (
-            <Empty description="没有符合当前筛选条件的邮件。" />
-          ) : null}
+        </div>
+      </aside>
 
-          <div className="message-list message-list-scroll">
-            {visibleMessages.map((item) => (
-              <article
-                key={`${item.accountId}:${item.id}`}
-                className={`message-tile ${selectedMessage?.id === item.id ? "active" : ""} ${!item.read ? "unread" : ""}`}
-                onClick={() => navigate(`/inbox/${item.id}`)}
-              >
-                <div className="message-meta">
-                  <span>{item.fromName}</span>
-                  <span>{dayjs(item.receivedAt).format("MMM D, HH:mm")}</span>
-                </div>
-                <h4 className="message-subject">
-                  {!item.read ? <EyeInvisibleOutlined style={{ marginRight: 8, color: "#2563EB" }} /> : null}
-                  {item.subject}
-                </h4>
-                <p className="message-preview">{item.preview}</p>
-                <Space wrap style={{ marginTop: 10 }}>
-                  <Tag color="blue">{item.accountDisplayName}</Tag>
-                  <Tag color={item.provider === "gmail" ? "geekblue" : "cyan"}>{item.providerLabel}</Tag>
-                  {item.flagged ? <Tag icon={<FlagFilled />}>已标记</Tag> : null}
-                  {item.attachments ? <Tag>{item.attachments} 个附件</Tag> : null}
-                </Space>
-              </article>
-            ))}
+      <section className="mail-list-panel" aria-labelledby="mail-list-title">
+        <div className="panel-heading">
+          <div>
+            <span className="section-label">
+              {activeAccountId === ALL_ACCOUNTS_ID
+                ? "全部账户"
+                : (activeAccount?.email ?? "当前账户")}
+            </span>
+            <h3 id="mail-list-title">{folderLabels[activeFolder]}</h3>
           </div>
+          <div className="panel-counter">
+            <ClockCircleOutlined />
+            <span>{mailPagination.total} 封</span>
+          </div>
+        </div>
 
-          <div style={{ marginTop: 18 }}>
+        {isLoadingMessages ? (
+          <Skeleton
+            className="mail-list-loading"
+            active
+            paragraph={{ rows: 8 }}
+          />
+        ) : null}
+        {!isLoadingMessages && !accounts.length ? (
+          <Empty className="mail-empty" description="尚未连接邮箱账户">
+            <Button type="primary" onClick={() => navigate("/auth")}>
+              添加账户
+            </Button>
+          </Empty>
+        ) : null}
+        {!isLoadingMessages &&
+        accounts.length > 0 &&
+        !visibleMessages.length ? (
+          <Empty className="mail-empty" description="当前范围内没有匹配邮件" />
+        ) : null}
+
+        <div className="message-list message-list-scroll">
+          {!isLoadingMessages &&
+            visibleMessages.map((item) => {
+              const isActive =
+                messageId === item.id ||
+                (!showDrawerDetail && selectedMessage?.id === item.id);
+              return (
+                <button
+                  aria-pressed={isActive}
+                  key={`${item.accountId}:${item.id}`}
+                  className={`message-tile ${isActive ? "active" : ""} ${!item.read ? "unread" : ""}`}
+                  onClick={() => navigate(`/inbox/${item.id}`)}
+                  type="button"
+                >
+                  <span className="message-meta">
+                    <strong>{item.fromName}</strong>
+                    <time dateTime={item.receivedAt}>
+                      {dayjs(item.receivedAt).format("MM-DD HH:mm")}
+                    </time>
+                  </span>
+                  <span className="message-subject">
+                    {!item.read ? (
+                      <EyeInvisibleOutlined aria-label="未读" />
+                    ) : null}
+                    {item.subject}
+                  </span>
+                  <span className="message-preview">
+                    {toPlainPreview(item.preview)}
+                  </span>
+                  <span className="message-footer">
+                    <span>{item.accountDisplayName}</span>
+                    <span className="message-indicators">
+                      {item.flagged ? <FlagFilled aria-label="已标星" /> : null}
+                      {item.attachments ? (
+                        <>
+                          <PaperClipOutlined aria-label="有附件" />
+                          {item.attachments}
+                        </>
+                      ) : null}
+                    </span>
+                  </span>
+                </button>
+              );
+            })}
+        </div>
+
+        {mailPagination.total > mailPagination.pageSize ? (
+          <div className="mail-pagination">
             <Pagination
+              simple
               current={mailPagination.page}
               pageSize={mailPagination.pageSize}
               total={mailPagination.total}
@@ -341,41 +502,83 @@ export default function InboxPage() {
                 void changePage(page);
               }}
             />
+            <span>{visibleMessages.length} 封可见</span>
           </div>
-        </article>
-
-        {!showDrawerDetail ? (
-          <article className="surface-card detail-panel">
-            {!selectedMessage && isLoadingMessageDetail ? <Skeleton active paragraph={{ rows: 2 }} /> : null}
-            {!selectedMessage && !isLoadingMessageDetail ? (
-              <Empty description="选择一封邮件以查看详情。" />
-            ) : null}
-            {selectedMessage ? (
-              <DetailContent
-                message={selectedMessage}
-                onReply={handleReply}
-                onForward={handleForward}
-              />
-            ) : null}
-          </article>
         ) : null}
-      </div>
+      </section>
+
+      {!showDrawerDetail ? (
+        <article className="mail-detail-panel">
+          {!selectedMessage && isLoadingMessageDetail ? (
+            <Skeleton active paragraph={{ rows: 4 }} />
+          ) : null}
+          {!selectedMessage && !isLoadingMessageDetail && messageDetailError ? (
+            <Alert
+              action={
+                <Button size="small" onClick={retryDetail}>
+                  重试
+                </Button>
+              }
+              description="邮件列表已加载，但当前邮件正文暂时无法获取。"
+              message={messageDetailError}
+              showIcon
+              type="error"
+            />
+          ) : null}
+          {!selectedMessage &&
+          !isLoadingMessageDetail &&
+          !messageDetailError ? (
+            <Empty
+              className="detail-empty"
+              description="选择一封邮件查看完整内容"
+            />
+          ) : null}
+          {selectedMessage ? (
+            <DetailContent
+              message={selectedMessage}
+              onReply={handleReply}
+              onForward={handleForward}
+            />
+          ) : null}
+        </article>
+      ) : null}
 
       <Drawer
         className="detail-drawer"
         destroyOnClose={false}
         onClose={() => navigate("/inbox")}
-        open={showDrawerDetail && Boolean(selectedMessage)}
+        open={
+          showDrawerDetail && Boolean(messageId) && Boolean(selectedMessage)
+        }
         placement="right"
         title={selectedMessage?.subject || "邮件详情"}
         width={screens.md ? 520 : "100%"}
         extra={
-          <Button icon={<SendOutlined />} size="small" onClick={() => void handleForward()}>
+          <Button
+            icon={<SendOutlined />}
+            size="small"
+            onClick={() => void handleForward()}
+          >
             转发
           </Button>
         }
       >
-        {isLoadingMessageDetail ? <Skeleton active paragraph={{ rows: 2 }} /> : null}
+        {isLoadingMessageDetail ? (
+          <Skeleton active paragraph={{ rows: 2 }} />
+        ) : null}
+        {!isLoadingMessageDetail && messageDetailError ? (
+          <Alert
+            action={
+              <Button size="small" onClick={retryDetail}>
+                重试
+              </Button>
+            }
+            description="邮件列表已加载，但当前邮件正文暂时无法获取。"
+            message={messageDetailError}
+            showIcon
+            type="error"
+          />
+        ) : null}
         {selectedMessage ? (
           <DetailContent
             message={selectedMessage}

@@ -1,13 +1,15 @@
 {
-  "name": "team",
+  "name": "mail-account-manager",
   "version": "1.0.0",
-  "description": "必看：\r 1.配置安装依赖并运行注册机\r 2.只需要配置一个动态代理或者自己改一下只需要一个代理 不用动态代理",
-  "main": "index.js",
+  "description": "Multi-provider mailbox management application.",
+  "private": true,
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "start": "powershell -ExecutionPolicy Bypass -File ./start.ps1 -Mode dev",
+    "stop": "powershell -ExecutionPolicy Bypass -File ./stop.ps1",
+    "build": "npm --prefix mail-backend run build && npm --prefix frontend run build",
+    "lint": "npm --prefix mail-backend run typecheck && npm --prefix frontend run lint",
+    "test": "npm --prefix mail-backend test && npm --prefix frontend test",
+    "validate": "npm run lint && npm test && npm run build"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
   "type": "commonjs"
 }

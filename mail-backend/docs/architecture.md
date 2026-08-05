@@ -1,163 +1,98 @@
 # Mail Backend Architecture
 
-## 1. Goals
+## Scope
 
-- Build a backend for managing multiple Gmail and Outlook/Hotmail accounts.
-- Expose both REST API and Web-ready OAuth callback endpoints.
-- Keep all secrets in environment variables.
-- Use TypeScript, JWT, Swagger, and Docker Compose.
+`mail-backend/` is the active MailOps API. It manages mailbox accounts, provider authentication, normalized mail access and the local lifecycle endpoint. The legacy root `backend/` is outside this runtime.
 
-## 2. Technical Stack
+## Stack And Layout
 
-- Runtime: Node.js 22+
-- HTTP framework: Fastify
-- ORM/database: Prisma + SQLite by default, PostgreSQL-ready through `DATABASE_URL`
-- Auth:
-  - Admin/API auth: JWT
-  - Mailbox auth: OAuth 2.0 authorization code flow
-- Mail providers:
-  - Gmail: Google OAuth 2.0 + Gmail API
-  - Outlook/Hotmail: Microsoft identity platform OAuth 2.0 + Microsoft Graph API
-- Docs: `@fastify/swagger` + `@fastify/swagger-ui`
-- Containers: Docker + Docker Compose
-
-## 3. Why This Stack
-
-- Fastify keeps the API small, typed, and fast to bootstrap.
-- Prisma gives a stable data model, migrations, and easy switch from SQLite to PostgreSQL.
-- SQLite is enough for local/dev bootstrap; PostgreSQL fits production concurrency.
-- Provider integrations stay isolated behind provider services, which makes Gmail and Microsoft flows consistent at the route layer.
-
-## 4. Architecture Layout
+- Node.js 22+, TypeScript, Fastify
+- Prisma + SQLite
+- JWT for the single administrator API session
+- Gmail API, Microsoft Graph and IMAP/SMTP providers
+- Swagger at `/docs`
 
 ```text
 mail-backend/
-├─ docs/
-│  └─ architecture.md
-├─ prisma/
-│  └─ schema.prisma
+├─ prisma/                 # schema and migrations
 ├─ src/
-│  ├─ config/          # env + swagger
-│  ├─ db/              # Prisma client
-│  ├─ lib/             # crypto, errors, mail parsing helpers
+│  ├─ config/             # validated environment
+│  ├─ db/                 # Prisma client
+│  ├─ lib/                # crypto, errors, validation, provider presentation
 │  ├─ modules/
-│  │  ├─ auth/         # JWT login
-│  │  ├─ accounts/     # account CRUD + OAuth bootstrap/callback
-│  │  └─ mail/         # list/detail/send/sync
-│  ├─ providers/       # Gmail and Microsoft Graph adapters
-│  ├─ types/           # shared mail/provider contracts
+│  │  ├─ auth/            # administrator JWT login
+│  │  ├─ accounts/        # CRUD, labels, OAuth and direct imports
+│  │  ├─ mail/            # account-scoped list/detail/send
+│  │  └─ system/          # health, compatibility mail routes, local shutdown
+│  ├─ providers/          # Gmail, Microsoft Graph and IMAP/SMTP behavior
+│  ├─ types/              # internal provider and mail contracts
 │  ├─ app.ts
 │  └─ server.ts
-├─ Dockerfile
-├─ docker-compose.yml
-└─ .env.example
+├─ test/
+└─ docs/architecture.md
 ```
 
-## 5. Authentication Strategy
+Provider-specific token exchange, refresh, folder mapping and mail operations belong in `src/providers/`. Routes validate HTTP input and services own account persistence and cross-provider orchestration.
 
-### 5.1 API JWT
+## Authentication Paths
 
-- `POST /api/v1/auth/login`
-- Admin credentials come from `API_ADMIN_USERNAME` and `API_ADMIN_PASSWORD`
-- Successful login returns a signed JWT
-- All account and mail APIs require `Authorization: Bearer <token>`
-- OAuth callback routes stay public because Google/Microsoft redirect back into them
+### Administrator JWT
 
-### 5.2 Gmail OAuth
+`POST /api/v1/auth/login` validates `API_ADMIN_USERNAME` and `API_ADMIN_PASSWORD`. Account, mail and shutdown APIs require the resulting bearer token. OAuth callback and health routes are explicit public exceptions.
 
-- Flow: Google OAuth 2.0 authorization code flow for server-side web apps
-- Redirect URI configured by `GOOGLE_OAUTH_REDIRECT_URI`
-- Recommended scopes in this implementation:
-  - `openid`
-  - `email`
-  - `profile`
-  - `https://www.googleapis.com/auth/gmail.modify`
-  - `https://www.googleapis.com/auth/gmail.send`
-- `access_type=offline` is required to receive a refresh token
-- `state` is stored server-side in DB with short expiration
+### Authorization Code OAuth
 
-Reference:
-- Google OAuth 2.0 for Web Server Applications
-- Gmail API `users.messages.list/get/send`
+Gmail and Microsoft authorization-code flows create a short-lived `OAuthState` record for anti-CSRF state and optional frontend redirect metadata. A successful callback upserts the account as `ACTIVE` and stores provider tokens encrypted.
 
-### 5.3 Microsoft OAuth
+### Microsoft Public Client Refresh Token
 
-- Flow: Microsoft identity platform authorization code flow for confidential server apps
-- Redirect URI configured by `MICROSOFT_OAUTH_REDIRECT_URI`
-- Tenant defaults to `common`, overridable by `MICROSOFT_TENANT_ID`
-- Recommended scopes in this implementation:
-  - `offline_access`
-  - `openid`
-  - `profile`
-  - `email`
-  - `Mail.Read`
-  - `Mail.ReadWrite`
-  - `Mail.Send`
-  - `User.Read`
-- Tokens are later used against Microsoft Graph `v1.0`
+`POST /api/v1/accounts/bind-oauth` and `/bind-oauth/batch` accept a per-account `clientId` and `refreshToken`. The service:
 
-Reference:
-- Microsoft identity platform authorization code flow
-- Microsoft Graph `GET /me/messages`
-- Microsoft Graph `POST /me/sendMail`
+1. exchanges the refresh token without a client secret, using tenant `consumers` by default;
+2. calls Microsoft Graph `/me` to validate the connection and resolve the canonical profile;
+3. upserts by `(MICROSOFT, email)` as `ACTIVE`;
+4. encrypts the access token, refresh token and per-account client ID;
+5. records `metadata.authMethod = "oauth-refresh"`, tenant and public-client marker.
 
-## 6. Data Model
+When Microsoft rotates the refresh token, the returned value replaces the stored value. Batch imports run each item independently and return a per-item result.
 
-### Account
+### IMAP / SMTP Password
 
-- One row per connected mailbox
-- Stores provider, email, display name, token expiry, scopes, encrypted access token, encrypted refresh token, and provider metadata
+The direct credential route verifies IMAP before persistence. The encrypted password uses the existing `accessToken` column, with `tokenType = "imap-password"`; server configuration is stored in metadata. These accounts bypass OAuth refresh and use the IMAP/SMTP provider paths.
 
-### OAuthState
+## Account Model And Lifecycle
 
-- Temporary anti-CSRF state storage
-- Supports optional web redirect metadata after OAuth callback completion
+`Account` stores provider identity, display data, encrypted credentials, scopes, expiry/sync timestamps and JSON metadata. `(provider, email)` is unique. Public account selects never expose encrypted credential fields.
 
-### MailMessage
+Persistent statuses are:
 
-- Cached remote messages normalized across providers
-- Stores subject, participants, preview, text/html body, folder, flags, timestamps, raw payload, and attachment flag
+- `ACTIVE`: usable and returned to the frontend as connected.
+- `DISCONNECTED`: visible but requires intervention.
+- `ERROR`: visible but requires intervention.
+- `ARCHIVED`: soft-deleted with `deletedAt` and excluded from normal lists.
 
-### Attachment
+Successful OAuth/import and re-import set `ACTIVE`; delete sets `ARCHIVED`; re-import clears `deletedAt`. Token expiry alone does not change status. The account service lazily refreshes tokens before provider calls and retries a Microsoft mail request once after an authentication 401.
 
-- Stores attachment metadata
-- Can later be extended to real file/object storage through `storageKey`
+Account labels are normalized into `metadata.labels`: trim, remove empty values, deduplicate, cap at 12 labels, and cap input label length at 24 characters. Credential upserts preserve existing labels.
 
-## 7. Main REST API
+## Mail Model
 
-- `POST /api/v1/auth/login`
-- `GET /api/v1/health`
-- `GET /api/v1/accounts`
-- `POST /api/v1/accounts`
-- `GET /api/v1/accounts/:accountId`
-- `PATCH /api/v1/accounts/:accountId`
-- `DELETE /api/v1/accounts/:accountId`
-- `POST /api/v1/accounts/oauth/google/url`
-- `GET /api/v1/accounts/oauth/google/callback`
-- `POST /api/v1/accounts/oauth/microsoft/url`
-- `GET /api/v1/accounts/oauth/microsoft/callback`
-- `GET /api/v1/accounts/:accountId/messages`
-- `GET /api/v1/accounts/:accountId/messages/:messageId`
-- `POST /api/v1/accounts/:accountId/messages/send`
+Provider messages are normalized into `MailMessage` and attachment metadata into `Attachment`. The API supports account-scoped list/detail/send and compatibility routes for a cross-account inbox. Provider folder identifiers are translated inside provider code; callers use stable folder keys.
 
-## 8. Token Handling
+## Security Boundaries
 
-- Provider tokens are encrypted at rest with `TOKEN_ENCRYPTION_KEY`
-- Access token refresh happens lazily before remote Gmail/Graph calls
-- When providers rotate refresh tokens, the new value replaces the old stored token
+- `TOKEN_ENCRYPTION_KEY` encrypts provider tokens, per-account Microsoft client IDs and IMAP passwords at rest.
+- Never return or log stored secrets, raw tokens or credentials.
+- All protected routes retain JWT authentication.
+- `POST /api/v1/system/shutdown` additionally checks that the request is local. On Windows it launches the root `launch-stop.ps1`, which detaches `stop.ps1` from the backend process tree.
+- `.env`, SQLite files and backups are local sensitive data and stay outside normal code changes.
 
-## 9. Deployment Notes
+## Persistence And Deployment
 
-- Dev: SQLite via `file:./prisma/dev.db`
-- Prod: set `DATABASE_URL` to PostgreSQL DSN
-- Docker Compose ships with PostgreSQL service for production-like local testing
+Local development uses the root environment and a SQLite file; Docker overrides `DATABASE_URL` to `file:/data/dev.db` and persists `/data` in the `mail_data` volume. Moving to PostgreSQL requires changing the Prisma datasource and producing tested migrations; changing only the URL is insufficient.
 
-## 10. External Reference Sources
+Schema changes require a Prisma migration. Labels intentionally use existing JSON metadata and therefore require no schema migration.
 
-Checked on 2026-06-14:
+## Validation
 
-- Google OAuth 2.0 for Web Server Applications: https://developers.google.com/identity/protocols/oauth2/web-server
-- Gmail API send/list/get references: https://developers.google.com/workspace/gmail/api/reference/rest/v1/users.messages
-- Microsoft Graph list messages: https://learn.microsoft.com/en-us/graph/api/user-list-messages?view=graph-rest-1.0
-- Microsoft Graph send mail: https://learn.microsoft.com/en-us/graph/api/user-sendmail?view=graph-rest-1.0
-- Microsoft identity platform auth code flow: https://learn.microsoft.com/en-us/entra/identity-platform/v2-oauth2-auth-code-flow
+Run `npm --prefix mail-backend run typecheck` and `npm --prefix mail-backend test` for backend changes. Shared API, authentication, data-model or user-flow changes require the repository-level `npm run validate`. Real provider flows remain manual acceptance items documented in `../../docs/testing.md`.

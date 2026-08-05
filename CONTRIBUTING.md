@@ -1,57 +1,46 @@
 # Repository Conventions
 
-## Project Layout
+## Active Project Layout
 
-This repository uses a simple monorepo layout:
+- `mail-backend/`: active Fastify API, providers, Prisma schema and backend tests
+- `frontend/`: active React application and frontend tests
+- `docs/`: maintained product, state and test documentation
+- `start.ps1`, `launch-stop.ps1`, `stop.ps1`: Windows local lifecycle
+- `docker-compose.yml`: active container topology
 
-- `backend/`: backend services and shared server-side modules
-- `frontend/`: frontend application and client-side modules
-- `docs/`: architecture notes, workflows, and team conventions
+`backend/` and root `ChatGPT_team.py` are legacy code. Do not implement MailOps changes there unless the task explicitly targets them.
 
 ## Branch Strategy
 
-- `main`: production branch; only release-ready code is merged here
-- `develop`: default integration branch for daily development
-- `feature/*`: all feature work branches from `develop` and merges back into `develop`
+- `main`: release-ready branch
+- `develop`: integration branch for daily development
+- `feature/*`: feature work branched from and merged into `develop`
 
-Branch naming format:
-
-```text
-feature/<area>-<short-description>
-```
-
-Examples:
-
-- `feature/auth-login`
-- `feature/mailbox-import`
-- `feature/admin-user-search`
+Use `feature/<area>-<short-description>`, for example `feature/mailbox-import`.
 
 ## Delivery Flow
 
-1. Branch from `develop`
-2. Commit with Conventional Commits
-3. Open a pull request into `develop`
-4. Merge `develop` into `main` for production releases
+1. Inspect `git status --short` and preserve existing user changes.
+2. Branch from `develop` when a branch is requested.
+3. Implement and run checks proportional to the change; run `npm run validate` for shared or cross-module behavior.
+4. Update the relevant authority document listed in `docs/README.md`.
+5. Commit only when requested, using Conventional Commits.
+6. Open a pull request into `develop`; merge `develop` into `main` for a release.
 
-## Commit Message Convention
+## Commit Messages
 
-Use Conventional Commits:
+Use:
 
 ```text
 <type>(<optional-scope>): <short summary>
 ```
 
-Common commit types:
-
-- `feat`: new feature
-- `fix`: bug fix
-- `docs`: documentation update
-- `refactor`: internal restructuring without behavior change
-- `test`: test changes
-- `chore`: tooling or repository maintenance
+Common types are `feat`, `fix`, `docs`, `refactor`, `test` and `chore`.
 
 Examples:
 
-- `feat(backend): add mailbox account aggregate`
-- `fix(frontend): handle expired session redirect`
-- `docs: document release workflow`
+- `feat(mail-backend): add mailbox import validation`
+- `fix(frontend): preserve account label filters`
+- `docs: refresh local deployment guide`
+
+Before committing, verify that the staged diff contains only the requested work and no `.env`, SQLite database, token, password, generated output or runtime log.

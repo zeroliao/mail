@@ -27,6 +27,7 @@ export type MailAccount = {
   status: AccountStatus;
   unreadCount: number;
   lastSyncAt: string;
+  labels: string[];
   scopeText?: string;
 };
 

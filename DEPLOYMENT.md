@@ -1,105 +1,93 @@
-# Mail Account Manager Deployment Scaffold
+# Mail Account Manager Deployment
 
-## 1. What This Adds
+## Runtime Layout
 
-This repository did not contain an existing Node.js backend or React frontend. The files added in this scaffold provide a minimal deployment baseline for the roadmap target system:
+- `frontend/`: React + Vite application, served by Nginx in Docker
+- `mail-backend/`: Fastify + Prisma API
+- `docker-compose.yml`: frontend and backend services
+- `mail_data`: named Docker volume containing the SQLite database
 
-- `backend/`: Express API with healthcheck, CORS, helmet and rate limiting
-- `frontend/`: React + Vite app, served by Nginx
-- `docker-compose.yml`: frontend + backend + PostgreSQL
-- `.github/workflows/ci.yml`: lint, test and build pipeline
-- `.env.example`: required environment variables
+The legacy `backend/` directory is not part of the active runtime.
 
-## 2. Quick Start
+## Local Development
 
-1. Optional but recommended: create a local environment file if you want to override defaults:
+Requirements:
 
-   ```bash
-   cp .env.example .env
-   ```
+- Node.js 22+
+- npm
+- A root `.env`; `start.ps1` creates it from `.env.example` when missing
 
-2. Update at least these values before production use:
+Start both services from the repository root:
 
-   - `POSTGRES_PASSWORD`
-   - `JWT_SECRET`
-   - `SESSION_SECRET`
-   - `GMAIL_CLIENT_ID`
-   - `GMAIL_CLIENT_SECRET`
-   - `MICROSOFT_CLIENT_ID`
-   - `MICROSOFT_CLIENT_SECRET`
+```powershell
+.\start.ps1 -Mode dev
+```
 
-3. Start all services:
+Endpoints:
 
-   ```bash
-   docker compose up
-   ```
+- Frontend: `http://localhost:5173`
+- Backend health: `http://localhost:3000/api/v1/health`
+- Swagger UI: `http://localhost:3000/docs`
 
-4. Open the app:
+Stop the recorded process trees and any remaining listeners on ports 3000/5173 that can be verified as belonging to this project:
 
-   - Frontend: `http://localhost:8080`
-   - Backend health API: `http://localhost:8080/api/health`
+```powershell
+.\stop.ps1
+```
 
-## 3. Services
+The PID file includes process start times to avoid terminating a reused PID. Port fallback cleanup inspects command lines and skips listeners that cannot be identified as MailOps. The authenticated UI stop action is available only for local Windows launcher mode and delegates to the same script through `launch-stop.ps1`.
 
-- `db`: PostgreSQL 16 with persistent volume `postgres_data`
-- `backend`: Node.js 20 Express API on internal port `3000`
-- `frontend`: Nginx serving the React build and proxying `/api/*` to `backend`
+The desktop shortcut `MailOps 邮件控制台.lnk` starts local dev mode and closes its command window after startup succeeds. It is a machine-local convenience, not a repository deployment artifact.
 
-## 4. Security Baseline
+## Docker
 
-### HTTPS
+Start the application:
 
-- Local compose uses plain HTTP for simplicity.
-- Production TLS termination should happen at Nginx or an upstream load balancer.
-- A sample TLS Nginx server block is included at `frontend/nginx/production-ssl.conf.example`.
-- For public deployments, use Let's Encrypt or your cloud provider certificate manager.
+```powershell
+.\start.ps1 -Mode docker
+```
 
-### CORS
+Or use Docker Compose directly:
 
-- Backend CORS is restricted by `CORS_ORIGIN`.
-- `TRUST_PROXY=1` assumes exactly one trusted reverse proxy in front of the backend.
-- Use explicit origins only, for example:
+```bash
+docker compose up --build -d
+```
 
-  ```env
-  CORS_ORIGIN=https://mail.example.com,https://admin.example.com
-  ```
+The backend uses `file:/data/dev.db`; the `mail_data` volume persists account and cached-message data across container recreation.
 
-- Do not use `*` if cookies or bearer tokens are involved.
+Back up the database before upgrades or destructive maintenance:
 
-### Rate Limiting
+```bash
+docker compose cp backend:/data/dev.db ./mail-backup.db
+```
 
-- Backend applies `express-rate-limit` to `/api`.
-- Tune with:
+## Required Configuration
 
-  ```env
-  RATE_LIMIT_WINDOW_MS=900000
-  RATE_LIMIT_MAX_REQUESTS=100
-  ```
+Replace all placeholder values before shared or production deployment:
 
-- For login, OAuth callback and send-mail endpoints, use tighter per-route limits when those endpoints are implemented.
+- `JWT_SECRET`
+- `TOKEN_ENCRYPTION_KEY`
+- `API_ADMIN_PASSWORD`
+- Provider client IDs and secrets for enabled OAuth integrations
+- OAuth redirect URIs registered with Google and Microsoft
 
-### Secrets
+The configured redirect URIs must exactly match the public backend URL. Local defaults use port `3000`.
 
-- Never commit `.env`.
-- Replace all default placeholder secrets before any shared or production deployment.
-- Prefer secret injection from GitHub Actions secrets, Docker secrets or your hosting platform secret manager.
+## Validation
 
-## 5. CI/CD Notes
+Run the complete local gate from the repository root:
 
-The GitHub Actions workflow currently does:
+```bash
+npm run validate
+```
 
-- `npm ci` for backend and frontend
-- backend/frontend lint
-- backend/frontend tests
-- frontend build
-- `docker compose build`
+This runs backend type checking and tests, frontend lint and tests, then both production builds. CI performs the same component-level checks and builds the Docker images.
 
-For CD, the next step is to add:
+## Production Constraints
 
-- container registry push
-- deployment job to the target host
-- environment-specific secret injection
-
-## 6. Important Scope Note
-
-The original repository contents are a standalone Python automation script, not the roadmap mailbox web app. This scaffold gives the project a runnable infrastructure baseline for the planned Node.js + React system, but the business endpoints, OAuth flows and mailbox features still need to be implemented on top of this base.
+- Current authentication is a single administrator account configured through environment variables.
+- JWTs are stored in browser `localStorage`; deploy only behind HTTPS and a restrictive Content Security Policy.
+- SQLite is appropriate for a single-instance internal deployment. Multi-instance or high-concurrency deployment requires a deliberate database migration, including a Prisma provider change and compatible migrations.
+- Terminate TLS at Nginx, a load balancer, or an ingress controller.
+- Keep `.env`, database files, and backups outside version control.
+- The UI shutdown endpoint is intentionally local-only. Use Docker Compose, a service manager, or the deployment platform to stop non-local instances.

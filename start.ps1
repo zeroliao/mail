@@ -27,6 +27,7 @@ $ErrorActionPreference = "Stop"
 $ProjectRoot = (Get-Item $PSScriptRoot).FullName
 $BackendDir = Join-Path $ProjectRoot "mail-backend"
 $FrontendDir = Join-Path $ProjectRoot "frontend"
+$RuntimeDir = Join-Path $ProjectRoot ".runtime"
 $EnvFile = Join-Path $ProjectRoot ".env"
 $EnvExample = Join-Path $ProjectRoot ".env.example"
 
@@ -44,19 +45,33 @@ function Test-PortInUse {
     return ($null -ne $conn)
 }
 
-function Stop-ProcessOnPort {
-    param([int]$Port)
-    try {
-        $conns = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction Stop
-    } catch { return }
-    foreach ($c in $conns) {
-        $proc = Get-Process -Id $c.OwningProcess -ErrorAction SilentlyContinue
-        if ($proc -and $proc.Name -ne "System") {
-            $msg = "Port {0} occupied by {1} (PID:{2}), killing..." -f $Port, $proc.Name, $proc.Id
-            Write-Warn $msg
-            Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
-            Start-Sleep -Milliseconds 500
+function Stop-ProcessTree {
+    param([int]$ProcessId)
+
+    $children = @(Get-CimInstance Win32_Process -Filter ("ParentProcessId=" + $ProcessId) -ErrorAction SilentlyContinue)
+    foreach ($child in $children) {
+        Stop-ProcessTree -ProcessId $child.ProcessId
+    }
+    Stop-Process -Id $ProcessId -Force -ErrorAction SilentlyContinue
+}
+
+function Import-DotEnv {
+    param([string]$LiteralPath)
+
+    foreach ($line in @(Get-Content -LiteralPath $LiteralPath -Encoding UTF8)) {
+        $trimmed = $line.Trim()
+        if (-not $trimmed -or $trimmed.StartsWith("#")) { continue }
+
+        $separator = $trimmed.IndexOf("=")
+        if ($separator -le 0) { continue }
+
+        $name = $trimmed.Substring(0, $separator).Trim()
+        $value = $trimmed.Substring($separator + 1).Trim()
+        if ($value.Length -ge 2 -and (($value[0] -eq '"' -and $value[-1] -eq '"') -or ($value[0] -eq "'" -and $value[-1] -eq "'"))) {
+            $value = $value.Substring(1, $value.Length - 2)
         }
+
+        [Environment]::SetEnvironmentVariable($name, $value, "Process")
     }
 }
 
@@ -66,21 +81,6 @@ Write-Host "================================================" -ForegroundColor M
 Write-Host "   Mail Account Manager - Startup" -ForegroundColor Magenta
 Write-Host ("   Mode: " + $Mode) -ForegroundColor Magenta
 Write-Host "================================================" -ForegroundColor Magenta
-
-# 0. Ensure Codex trusts this project dir (skip the per-agent "trust this
-#    directory?" first-run prompt). Idempotent; covers short + long path forms.
-Write-Step "Ensuring Codex directory trust"
-$trustScript = Join-Path $ProjectRoot "ensure-codex-trust.ps1"
-if (Test-Path $trustScript) {
-    try {
-        & $trustScript -ProjectDir $ProjectRoot
-        Write-Ok "Codex trust ensured"
-    } catch {
-        Write-Warn ("Could not ensure Codex trust: " + $_.Exception.Message)
-    }
-} else {
-    Write-Warn "ensure-codex-trust.ps1 not found; skipping trust setup"
-}
 
 # 1. Check .env
 Write-Step "Checking .env config"
@@ -101,13 +101,12 @@ if (-not (Test-Path $EnvFile)) {
     Write-Ok ".env exists"
 }
 
-# Load port from .env
-$envLines = Get-Content $EnvFile
+Import-DotEnv -LiteralPath $EnvFile
+
+# Load ports from the canonical root environment.
 $backendPort = 3000
 $frontendPort = 5173
-foreach ($line in $envLines) {
-    if ($line -match "^PORT=(\d+)") { $backendPort = [int]$Matches[1] }
-}
+if ($env:PORT -match "^\d+$") { $backendPort = [int]$env:PORT }
 
 # ====================== DOCKER MODE ======================
 if ($Mode -eq "docker") {
@@ -168,8 +167,12 @@ if ($Mode -eq "docker") {
 
     $dockerFrontendPort = 5173
     $dockerBackendPort = 3000
-    if (Test-PortInUse $dockerFrontendPort) { Stop-ProcessOnPort $dockerFrontendPort }
-    if (Test-PortInUse $dockerBackendPort) { Stop-ProcessOnPort $dockerBackendPort }
+    foreach ($port in @($dockerFrontendPort, $dockerBackendPort)) {
+        if (Test-PortInUse $port) {
+            Write-Err ("Port {0} is already in use. Stop the owning service before starting Docker mode." -f $port)
+            exit 1
+        }
+    }
 
     Set-Location $ProjectRoot
     docker compose down 2>$null
@@ -185,7 +188,7 @@ if ($Mode -eq "docker") {
     for ($i = 0; $i -lt 30; $i++) {
         Start-Sleep -Seconds 2
         try {
-            $resp = Invoke-WebRequest -Uri ("http://localhost:" + $dockerFrontendPort) -UseBasicParsing -TimeoutSec 3 -ErrorAction Stop
+            $resp = Invoke-WebRequest -Uri ("http://127.0.0.1:" + $dockerFrontendPort) -UseBasicParsing -TimeoutSec 3 -ErrorAction Stop
             if ($resp.StatusCode -eq 200) { $ready = $true; break }
         } catch {}
         Write-Host "." -NoNewline
@@ -220,12 +223,14 @@ if (-not $nodeCmd) {
 $nodeVer = node --version
 Write-Ok ("Node.js " + $nodeVer)
 
-$npmCmd = Get-Command npm -ErrorAction SilentlyContinue
+$npmCmd = Get-Command npm.cmd -ErrorAction SilentlyContinue
 if (-not $npmCmd) {
     Write-Err "npm not found"
     exit 1
 }
-$npmVer = npm --version
+$npmExecutable = $npmCmd.Source
+$npmVer = & $npmExecutable --version
+if ($LASTEXITCODE -ne 0) { Write-Err "Unable to execute npm"; exit 1 }
 Write-Ok ("npm " + $npmVer)
 
 # 3. Backend dependencies
@@ -234,7 +239,7 @@ $backendModules = Join-Path $BackendDir "node_modules"
 if (-not (Test-Path $backendModules)) {
     Write-Warn "Installing backend dependencies..."
     Set-Location $BackendDir
-    npm install
+    & $npmExecutable ci
     if ($LASTEXITCODE -ne 0) { Write-Err "Backend npm install failed"; exit 1 }
     Write-Ok "Backend dependencies installed"
 } else {
@@ -247,7 +252,7 @@ $frontendModules = Join-Path $FrontendDir "node_modules"
 if (-not (Test-Path $frontendModules)) {
     Write-Warn "Installing frontend dependencies..."
     Set-Location $FrontendDir
-    npm install
+    & $npmExecutable ci
     if ($LASTEXITCODE -ne 0) { Write-Err "Frontend npm install failed"; exit 1 }
     Write-Ok "Frontend dependencies installed"
 } else {
@@ -257,10 +262,11 @@ if (-not (Test-Path $frontendModules)) {
 # 5. Prisma client
 Write-Step "Checking Prisma client"
 $prismaClient = Join-Path $BackendDir "node_modules\.prisma\client"
+$prismaExecutable = Join-Path $BackendDir "node_modules\.bin\prisma.cmd"
 if (-not (Test-Path $prismaClient)) {
     Write-Warn "Generating Prisma client..."
     Set-Location $BackendDir
-    npx prisma generate
+    & $prismaExecutable generate
     if ($LASTEXITCODE -ne 0) { Write-Err "Prisma generate failed"; exit 1 }
     Write-Ok "Prisma client generated"
 } else {
@@ -277,10 +283,11 @@ if (-not (Test-Path $dbDir)) {
 if (-not (Test-Path $dbFile)) {
     Write-Warn "Database not found. Running migration..."
     Set-Location $BackendDir
-    npx prisma migrate deploy
+    & $prismaExecutable migrate deploy
     if ($LASTEXITCODE -ne 0) {
         Write-Warn "migrate deploy failed, trying migrate dev..."
-        npx prisma migrate dev --name init --skip-generate
+        & $prismaExecutable migrate dev --name init --skip-generate
+        if ($LASTEXITCODE -ne 0) { Write-Err "Database migration failed"; exit 1 }
     }
     Write-Ok "Database migration complete"
 } else {
@@ -290,73 +297,75 @@ if (-not (Test-Path $dbFile)) {
 # 7. Check ports
 Write-Step "Checking port availability"
 if (Test-PortInUse $backendPort) {
-    Write-Warn ("Backend port " + $backendPort + " in use")
-    Stop-ProcessOnPort $backendPort
-    Start-Sleep -Seconds 1
-    if (Test-PortInUse $backendPort) {
-        Write-Err ("Cannot free port " + $backendPort)
-        exit 1
-    }
-    Write-Ok ("Port " + $backendPort + " freed")
+    Write-Err ("Backend port " + $backendPort + " is already in use. Run .\stop.ps1 or choose another port.")
+    exit 1
 } else {
     Write-Ok ("Backend port " + $backendPort + " available")
 }
 
 if (Test-PortInUse $frontendPort) {
-    Write-Warn ("Frontend port " + $frontendPort + " in use")
-    Stop-ProcessOnPort $frontendPort
-    Start-Sleep -Seconds 1
-    if (Test-PortInUse $frontendPort) {
-        Write-Err ("Cannot free port " + $frontendPort)
-        exit 1
-    }
-    Write-Ok ("Port " + $frontendPort + " freed")
+    Write-Err ("Frontend port " + $frontendPort + " is already in use. Run .\stop.ps1 or choose another port.")
+    exit 1
 } else {
     Write-Ok ("Frontend port " + $frontendPort + " available")
 }
 
 # 8. Start backend
 Write-Step ("Starting backend (port " + $backendPort + ")")
+if (-not (Test-Path -LiteralPath $RuntimeDir)) {
+    New-Item -ItemType Directory -Path $RuntimeDir -Force | Out-Null
+}
+$backendOutLog = Join-Path $RuntimeDir "backend.out.log"
+$backendErrLog = Join-Path $RuntimeDir "backend.err.log"
+$frontendOutLog = Join-Path $RuntimeDir "frontend.out.log"
+$frontendErrLog = Join-Path $RuntimeDir "frontend.err.log"
 Set-Location $BackendDir
-$backendJob = Start-Process -FilePath "npm" -ArgumentList "run","dev" -WorkingDirectory $BackendDir -PassThru -WindowStyle Minimized
+$backendJob = Start-Process -FilePath $npmExecutable -ArgumentList "run","dev" -WorkingDirectory $BackendDir -PassThru -WindowStyle Hidden -RedirectStandardOutput $backendOutLog -RedirectStandardError $backendErrLog
 Write-Ok ("Backend PID: " + $backendJob.Id)
 
 # Wait for backend
 $backendReady = $false
 for ($i = 0; $i -lt 20; $i++) {
     Start-Sleep -Seconds 1
-    $testPorts = @($backendPort, 3002) | Select-Object -Unique
-    foreach ($tp in $testPorts) {
-        if (Test-PortInUse $tp) {
-            $backendPort = $tp
-            $backendReady = $true
-            break
-        }
-    }
+    try {
+        $response = Invoke-WebRequest -Uri ("http://127.0.0.1:" + $backendPort + "/api/v1/health") -UseBasicParsing -TimeoutSec 2
+        if ($response.StatusCode -eq 200) { $backendReady = $true }
+    } catch {}
     if ($backendReady) { break }
 }
 if ($backendReady) {
     Write-Ok ("Backend ready on port " + $backendPort)
 } else {
-    Write-Warn "Backend may still be starting..."
+    Stop-ProcessTree -ProcessId $backendJob.Id
+    if (Test-Path -LiteralPath $backendErrLog) { Get-Content -LiteralPath $backendErrLog -Tail 20 -ErrorAction SilentlyContinue }
+    Write-Err "Backend did not become healthy in time"
+    exit 1
 }
 
 # 9. Start frontend
 Write-Step ("Starting frontend (port " + $frontendPort + ")")
 Set-Location $FrontendDir
-$frontendJob = Start-Process -FilePath "npm" -ArgumentList "run","dev" -WorkingDirectory $FrontendDir -PassThru -WindowStyle Minimized
+$frontendJob = Start-Process -FilePath $npmExecutable -ArgumentList "run","dev" -WorkingDirectory $FrontendDir -PassThru -WindowStyle Hidden -RedirectStandardOutput $frontendOutLog -RedirectStandardError $frontendErrLog
 Write-Ok ("Frontend PID: " + $frontendJob.Id)
 
 # Wait for frontend
 $frontendReady = $false
 for ($i = 0; $i -lt 15; $i++) {
     Start-Sleep -Seconds 1
-    if (Test-PortInUse $frontendPort) { $frontendReady = $true; break }
+    try {
+        $response = Invoke-WebRequest -Uri ("http://127.0.0.1:" + $frontendPort) -UseBasicParsing -TimeoutSec 2
+        if ($response.StatusCode -eq 200) { $frontendReady = $true; break }
+    } catch {}
 }
 if ($frontendReady) {
     Write-Ok ("Frontend ready on port " + $frontendPort)
 } else {
-    Write-Warn "Frontend may still be starting..."
+    foreach ($processId in @($frontendJob.Id, $backendJob.Id)) {
+        Stop-ProcessTree -ProcessId $processId
+    }
+    if (Test-Path -LiteralPath $frontendErrLog) { Get-Content -LiteralPath $frontendErrLog -Tail 20 -ErrorAction SilentlyContinue }
+    Write-Err "Frontend did not become ready in time"
+    exit 1
 }
 
 # 10. Done
@@ -370,11 +379,11 @@ Write-Host "================================================" -ForegroundColor G
 Write-Host ""
 
 # Save PIDs for stop.ps1
-$pidFile = Join-Path $ProjectRoot ".running-pids"
-$pidContent = ("backend=" + $backendJob.Id + "`nfrontend=" + $frontendJob.Id)
+$pidFile = Join-Path $RuntimeDir "running-pids"
+$pidContent = ("backend={0}|{1}`nfrontend={2}|{3}" -f $backendJob.Id, $backendJob.StartTime.ToUniversalTime().Ticks, $frontendJob.Id, $frontendJob.StartTime.ToUniversalTime().Ticks)
 $pidContent | Set-Content $pidFile -Encoding utf8
 
-Write-Host "PIDs saved to .running-pids" -ForegroundColor DarkGray
+Write-Host "PIDs saved to .runtime/running-pids" -ForegroundColor DarkGray
 
 if (-not $SkipOpen) {
     Start-Sleep -Seconds 1

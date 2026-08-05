@@ -16,5 +16,12 @@ services:
       context: ./mail-backend
     env_file:
       - .env
+    environment:
+      DATABASE_URL: file:/data/dev.db
     ports:
       - "3000:3000"
+    volumes:
+      - mail_data:/data
+
+volumes:
+  mail_data:

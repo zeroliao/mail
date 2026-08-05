@@ -1,7 +1,9 @@
 import type React from "react";
 import dayjs from "dayjs";
+import "dayjs/locale/zh-cn";
 import relativeTime from "dayjs/plugin/relativeTime";
 import {
+  ArrowRightOutlined,
   CheckCircleFilled,
   GoogleOutlined,
   KeyOutlined,
@@ -9,7 +11,7 @@ import {
   MailOutlined,
   SyncOutlined,
   ThunderboltOutlined,
-  UserOutlined
+  UserOutlined,
 } from "@ant-design/icons";
 import {
   Alert,
@@ -25,19 +27,25 @@ import {
   Space,
   Tabs,
   Tag,
-  Typography
+  Typography,
 } from "antd";
 import { useState } from "react";
-import { getApiErrorDescription, getApiErrorMessage, getApiValidationIssues } from "../services/http";
+import { useNavigate } from "react-router-dom";
+import {
+  getApiErrorDescription,
+  getApiErrorMessage,
+  getApiValidationIssues,
+} from "../services/http";
 import { useMailAppStore } from "../store/useMailAppStore";
 import type {
   BindOAuthAccountResponse,
   BindOAuthBatchResponse,
   BindOAuthPayload,
-  ProviderKind
+  ProviderKind,
 } from "../types/mail";
 
 dayjs.extend(relativeTime);
+dayjs.locale("zh-cn");
 
 type TokenImportFormValues = {
   email: string;
@@ -61,29 +69,30 @@ const providerCards: Array<{
   {
     key: "gmail",
     title: "Gmail OAuth2",
-    description: "绑定 Google Workspace 或 Gmail 账号，用于收件箱同步、回信和发信。",
+    description:
+      "绑定 Google Workspace 或 Gmail 账号，用于收件箱同步、回信和发信。",
     scopeHint: "权限范围：邮箱、个人资料、Gmail 读写、Gmail 发送。",
-    icon: <GoogleOutlined style={{ fontSize: 24, color: "#ea4335" }} />
+    icon: <GoogleOutlined style={{ fontSize: 24, color: "#ea4335" }} />,
   },
   {
     key: "microsoft",
     title: "Outlook / Hotmail OAuth2",
     description: "通过兼容 Graph 的授权流程绑定 Microsoft 个人或工作账号。",
     scopeHint: "权限范围：Mail.Read、Mail.ReadWrite、Mail.Send、User.Read。",
-    icon: <MailOutlined style={{ fontSize: 24, color: "#0a66c2" }} />
-  }
+    icon: <MailOutlined style={{ fontSize: 24, color: "#0a66c2" }} />,
+  },
 ];
 
 const defaultMicrosoftScopes = [
   "https://graph.microsoft.com/Mail.ReadWrite",
   "https://graph.microsoft.com/Mail.Send",
   "https://graph.microsoft.com/User.Read",
-  "offline_access"
+  "offline_access",
 ] as const;
 
 const scopeOptions = defaultMicrosoftScopes.map((value) => ({
   label: value,
-  value
+  value,
 }));
 
 const parseScopeText = (value?: string) => {
@@ -95,24 +104,38 @@ const parseScopeText = (value?: string) => {
   return scopes.length ? scopes : undefined;
 };
 
-const normalizeBatchPayload = (value: Record<string, unknown>, lineNumber: number): BindOAuthPayload => {
-  if (typeof value.email !== "string" || typeof value.refreshToken !== "string" || typeof value.clientId !== "string") {
-    throw new Error(`第 ${lineNumber} 行缺少必填字段：email、refreshToken、clientId。`);
+const normalizeBatchPayload = (
+  value: Record<string, unknown>,
+  lineNumber: number,
+): BindOAuthPayload => {
+  if (
+    typeof value.email !== "string" ||
+    typeof value.refreshToken !== "string" ||
+    typeof value.clientId !== "string"
+  ) {
+    throw new Error(
+      `第 ${lineNumber} 行缺少必填字段：email、refreshToken、clientId。`,
+    );
   }
 
-  const scope =
-    Array.isArray(value.scope)
-      ? value.scope.filter((item): item is string => typeof item === "string" && item.trim().length > 0)
-      : typeof value.scope === "string"
-        ? parseScopeText(value.scope)
-        : undefined;
+  const scope = Array.isArray(value.scope)
+    ? value.scope.filter(
+        (item): item is string =>
+          typeof item === "string" && item.trim().length > 0,
+      )
+    : typeof value.scope === "string"
+      ? parseScopeText(value.scope)
+      : undefined;
 
   return {
     email: value.email.trim(),
     refreshToken: value.refreshToken.trim(),
     clientId: value.clientId.trim(),
-    displayName: typeof value.displayName === "string" && value.displayName.trim() ? value.displayName.trim() : undefined,
-    scope
+    displayName:
+      typeof value.displayName === "string" && value.displayName.trim()
+        ? value.displayName.trim()
+        : undefined,
+    scope,
   };
 };
 
@@ -141,10 +164,16 @@ const parseBatchRecords = (input: string): BindOAuthPayload[] => {
       }
     }
 
-    const delimiter = line.includes("\t") ? "\t" : line.includes("|") ? "|" : ",";
+    const delimiter = line.includes("\t")
+      ? "\t"
+      : line.includes("|")
+        ? "|"
+        : ",";
     const parts = line.split(delimiter).map((item) => item.trim());
     if (parts.length < 3) {
-      throw new Error(`第 ${lineNumber} 行格式不正确，至少需要 email、refreshToken、clientId 三列。`);
+      throw new Error(
+        `第 ${lineNumber} 行格式不正确，至少需要 email、refreshToken、clientId 三列。`,
+      );
     }
 
     const [email, refreshToken, clientId, displayName, ...scopeParts] = parts;
@@ -153,7 +182,7 @@ const parseBatchRecords = (input: string): BindOAuthPayload[] => {
       refreshToken,
       clientId,
       displayName: displayName || undefined,
-      scope: parseScopeText(scopeParts.join(" "))
+      scope: parseScopeText(scopeParts.join(" ")),
     };
   });
 };
@@ -168,7 +197,9 @@ const renderErrorDetails = (error: unknown) => {
 
   return (
     <Space direction="vertical" size={4}>
-      {errorDescription ? <Typography.Text>{errorDescription}</Typography.Text> : null}
+      {errorDescription ? (
+        <Typography.Text>{errorDescription}</Typography.Text>
+      ) : null}
       {validationIssues.map((issue) => (
         <Typography.Text key={issue}>{issue}</Typography.Text>
       ))}
@@ -195,13 +226,17 @@ const shouldUseCustomScope = (scopes?: string[]) => {
 
 export default function AuthBindingPage() {
   const { message } = App.useApp();
+  const navigate = useNavigate();
   const [loginForm] = Form.useForm<{ username: string; password: string }>();
   const [singleForm] = Form.useForm<TokenImportFormValues>();
   const [batchForm] = Form.useForm<BatchImportFormValues>();
   const [imapEmail, setImapEmail] = useState("");
   const [imapPassword, setImapPassword] = useState("");
-  const [singleResult, setSingleResult] = useState<BindOAuthAccountResponse | null>(null);
-  const [batchResult, setBatchResult] = useState<BindOAuthBatchResponse | null>(null);
+  const [singleResult, setSingleResult] =
+    useState<BindOAuthAccountResponse | null>(null);
+  const [batchResult, setBatchResult] = useState<BindOAuthBatchResponse | null>(
+    null,
+  );
   const [singleError, setSingleError] = useState<unknown>(null);
   const [batchError, setBatchError] = useState<unknown>(null);
   const [advancedScopeOpen, setAdvancedScopeOpen] = useState(false);
@@ -226,7 +261,9 @@ export default function AuthBindingPage() {
     try {
       const values = await loginForm.validateFields();
       await login(values.username.trim(), values.password);
+      loginForm.resetFields(["password"]);
       message.success("已成功登录邮件后端。");
+      navigate("/inbox");
     } catch (error) {
       if (isFormValidationError(error)) {
         return;
@@ -259,7 +296,7 @@ export default function AuthBindingPage() {
         refreshToken: values.refreshToken.trim(),
         clientId: values.clientId.trim(),
         displayName: values.displayName?.trim() || undefined,
-        scope: shouldUseCustomScope(values.scope) ? values.scope : undefined
+        scope: shouldUseCustomScope(values.scope) ? values.scope : undefined,
       };
 
       setSingleError(null);
@@ -288,7 +325,9 @@ export default function AuthBindingPage() {
       setBatchResult(result);
 
       if (result.failed > 0) {
-        message.warning(`批量导入完成：成功 ${result.success} / ${result.total}`);
+        message.warning(
+          `批量导入完成：成功 ${result.success} / ${result.total}`,
+        );
       } else {
         message.success(`批量导入完成：共 ${result.total} 条，全部成功`);
       }
@@ -306,23 +345,33 @@ export default function AuthBindingPage() {
     <section className="page-grid">
       <div className="page-header-row">
         <div>
-          <h2>登录与账号绑定</h2>
-          <p>先登录后端，再按需使用 OAuth 授权、密码直连或 Microsoft Token 直连导入。</p>
+          <h2>{isAuthenticated ? "添加与绑定账户" : "登录邮件控制台"}</h2>
+          <p>
+            {isAuthenticated
+              ? "选择与账号来源匹配的连接方式。"
+              : "使用管理员凭据进入多账户邮件工作台。"}
+          </p>
         </div>
       </div>
 
-      <Card className="surface-card">
+      <Card
+        className={`surface-card auth-session-card ${isAuthenticated ? "authenticated" : ""}`}
+      >
         <div className="card-title-row">
           <div>
-            <h3>后端登录</h3>
-            <p>账号绑定相关请求都需要管理员 Bearer Token。</p>
+            <h3>{isAuthenticated ? "管理员会话已连接" : "管理员登录"}</h3>
+            <p>
+              {isAuthenticated
+                ? "账户绑定与同步接口均可用。"
+                : "凭据只用于向本地邮件后端换取访问令牌。"}
+            </p>
           </div>
           <Tag color={isAuthenticated ? "success" : "warning"}>
             {isAuthenticated ? "已认证" : "需要登录"}
           </Tag>
         </div>
 
-        {authError ? (
+        {!isAuthenticated && authError ? (
           <Alert
             className="compose-alert"
             description="请检查后端管理员凭据、环境变量或当前 Token 是否已失效。"
@@ -332,341 +381,507 @@ export default function AuthBindingPage() {
           />
         ) : null}
 
-        <Form form={loginForm} layout="vertical" initialValues={{ username: "admin", password: "" }}>
-          <Form.Item label="用户名" name="username" rules={[{ required: true, message: "请输入用户名" }]}>
-            <Input prefix={<UserOutlined />} />
-          </Form.Item>
-          <Form.Item label="密码" name="password" rules={[{ required: true, message: "请输入密码" }]}>
-            <Input.Password prefix={<LockOutlined />} />
-          </Form.Item>
-          <Button type="primary" loading={isLoggingIn} onClick={() => void handleLogin()}>
-            登录
-          </Button>
-        </Form>
+        {isAuthenticated ? (
+          <div className="authenticated-session-row">
+            <div>
+              <CheckCircleFilled />
+              <span>
+                已加载 {accounts.length} 个账户，可以继续添加或返回收件箱。
+              </span>
+            </div>
+            <Button
+              icon={<ArrowRightOutlined />}
+              type="primary"
+              onClick={() => navigate("/inbox")}
+            >
+              进入收件箱
+            </Button>
+          </div>
+        ) : (
+          <Form
+            className="login-form"
+            form={loginForm}
+            layout="vertical"
+            initialValues={{ username: "admin", password: "" }}
+            onFinish={() => void handleLogin()}
+          >
+            <Form.Item
+              label="用户名"
+              name="username"
+              rules={[{ required: true, message: "请输入用户名" }]}
+            >
+              <Input autoComplete="username" prefix={<UserOutlined />} />
+            </Form.Item>
+            <Form.Item
+              label="密码"
+              name="password"
+              rules={[{ required: true, message: "请输入密码" }]}
+            >
+              <Input.Password
+                autoComplete="current-password"
+                prefix={<LockOutlined />}
+              />
+            </Form.Item>
+            <Button htmlType="submit" type="primary" loading={isLoggingIn}>
+              登录
+            </Button>
+          </Form>
+        )}
       </Card>
 
-      <div className="auth-grid">
-        {providerCards.map((card) => {
-          const config = providerConfig[card.key];
-          return (
-            <article key={card.key} className="provider-card">
-              <Space>{card.icon}</Space>
-              <h3>{card.title}</h3>
-              <p>{card.description}</p>
-              <p className="scope-hint">{card.scopeHint}</p>
-              <div className="provider-status">
-                <Space wrap>
-                  <Tag color={config.enabled ? "success" : "warning"}>
-                    {config.enabled ? "OAuth 可用" : "等待密钥配置"}
-                  </Tag>
-                  {config.callbackUrl ? <Tag>{config.callbackUrl}</Tag> : null}
-                </Space>
-                <Button
-                  type="primary"
-                  disabled={!isAuthenticated}
-                  loading={isBinding}
-                  onClick={() => void handleBind(card.key)}
-                >
-                  绑定账号
-                </Button>
+      {isAuthenticated ? (
+        <>
+          <section
+            className="binding-section"
+            aria-labelledby="oauth-binding-title"
+          >
+            <div className="section-heading">
+              <div>
+                <span className="section-label">推荐方式</span>
+                <h3 id="oauth-binding-title">OAuth 授权</h3>
               </div>
-            </article>
-          );
-        })}
-      </div>
+              <p>适合需要完整收发信能力的常用账户。</p>
+            </div>
+            <div className="auth-grid">
+              {providerCards.map((card) => {
+                const config = providerConfig[card.key];
+                return (
+                  <article key={card.key} className="provider-card">
+                    <div className="provider-icon">{card.icon}</div>
+                    <h3>{card.title}</h3>
+                    <p>{card.description}</p>
+                    <p className="scope-hint">{card.scopeHint}</p>
+                    <div className="provider-status">
+                      <Space wrap>
+                        <Tag color={config.enabled ? "success" : "warning"}>
+                          {config.enabled ? "OAuth 可用" : "等待密钥配置"}
+                        </Tag>
+                        {config.callbackUrl ? <Tag>回调已配置</Tag> : null}
+                      </Space>
+                      <Button
+                        type="primary"
+                        disabled={!isAuthenticated}
+                        loading={isBinding}
+                        onClick={() => void handleBind(card.key)}
+                      >
+                        绑定账号
+                      </Button>
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+          </section>
 
-      <Card className="surface-card">
-        <div className="card-title-row">
-          <div>
-            <h3>Token 直连导入（Microsoft OAuth）</h3>
-            <p>使用 `refreshToken + clientId` 直连绑定 Microsoft 账号，支持单个导入和批量粘贴。</p>
-          </div>
-          <Tag color="blue">
-            <ThunderboltOutlined /> Token 直连
-          </Tag>
-        </div>
+          <Card className="surface-card binding-card token-binding-card">
+            <div className="card-title-row">
+              <div>
+                <h3>Token 直连导入（Microsoft OAuth）</h3>
+                <p>
+                  使用 refreshToken + clientId 直连绑定 Microsoft
+                  账号，支持单个导入和批量粘贴。
+                </p>
+              </div>
+              <Tag color="blue">
+                <ThunderboltOutlined /> Token 直连
+              </Tag>
+            </div>
 
-        <Typography.Paragraph type="secondary" style={{ marginBottom: 16 }}>
-          批量粘贴支持两种格式：每行一个 JSON；或每行按
-          <Typography.Text code style={{ marginInline: 8 }}>
-            email, refreshToken, clientId, displayName, scope
-          </Typography.Text>
-          顺序输入，分隔符支持逗号、Tab、`|`。其中 `displayName` 和 `scope` 都是可选列；不传 `scope` 时后端会自动使用默认值。
-        </Typography.Paragraph>
+            <Typography.Paragraph type="secondary" style={{ marginBottom: 16 }}>
+              批量粘贴支持两种格式：每行一个 JSON；或每行按
+              <Typography.Text code style={{ marginInline: 8 }}>
+                email, refreshToken, clientId, displayName, scope
+              </Typography.Text>
+              顺序输入，分隔符支持逗号、Tab、`|`。其中 `displayName` 和 `scope`
+              都是可选列；不传 `scope` 时后端会自动使用默认值。
+            </Typography.Paragraph>
 
-        <Tabs
-          items={[
-            {
-              key: "single",
-              label: "单个导入",
-              children: (
-                <Space direction="vertical" size={16} style={{ width: "100%" }}>
-                  {singleError ? (
-                    <Alert
-                      message={getApiErrorMessage(singleError, "导入失败")}
-                      description={renderErrorDetails(singleError)}
-                      showIcon
-                      type="error"
-                    />
-                  ) : null}
-
-                  {singleResult ? (
-                    <Alert
-                      message="导入成功"
-                      description={
-                        <Space wrap>
-                          <Typography.Text strong>{singleResult.account.email}</Typography.Text>
-                          <Tag color="success">{singleResult.account.status}</Tag>
-                        </Space>
-                      }
-                      showIcon
-                      type="success"
-                    />
-                  ) : null}
-
-                  <Form form={singleForm} layout="vertical">
-                    <Form.Item
-                      label="邮箱地址"
-                      name="email"
-                      rules={[
-                        { required: true, message: "请输入邮箱地址" },
-                        { type: "email", message: "请输入有效的邮箱地址" }
-                      ]}
+            <Tabs
+              items={[
+                {
+                  key: "single",
+                  label: "单个导入",
+                  children: (
+                    <Space
+                      direction="vertical"
+                      size={16}
+                      style={{ width: "100%" }}
                     >
-                      <Input prefix={<MailOutlined />} placeholder="owner@outlook.com" />
-                    </Form.Item>
-                    <Form.Item
-                      label="Refresh Token"
-                      name="refreshToken"
-                      rules={[{ required: true, message: "请输入 refreshToken" }]}
-                    >
-                      <Input.TextArea autoSize={{ minRows: 3, maxRows: 6 }} placeholder="微软 refresh token" />
-                    </Form.Item>
-                    <Form.Item
-                      label="Client ID"
-                      name="clientId"
-                      rules={[{ required: true, message: "请输入 clientId" }]}
-                    >
-                      <Input placeholder="public client id" />
-                    </Form.Item>
-                    <Form.Item label="显示名称" name="displayName">
-                      <Input placeholder="可选；默认以后端 /me 返回为准" />
-                    </Form.Item>
-                    <Collapse
-                      ghost
-                      activeKey={advancedScopeOpen ? ["scope"] : []}
-                      onChange={(keys) => setAdvancedScopeOpen(keys.includes("scope"))}
-                      items={[
-                        {
-                          key: "scope",
-                          label: "高级选项",
-                          children: (
-                            <Form.Item
-                              label="Scope"
-                              name="scope"
-                              initialValue={[...defaultMicrosoftScopes]}
-                              extra="默认不传 scope，后端会自动使用推荐范围；只有需要自定义时才在这里调整。"
-                            >
-                              <Select
-                                mode="multiple"
-                                options={scopeOptions}
-                                placeholder="选择需要的授权范围"
-                              />
-                            </Form.Item>
-                          )
-                        }
-                      ]}
-                    />
-                    <Button
-                      type="primary"
-                      disabled={!isAuthenticated}
-                      loading={isBinding}
-                      onClick={() => void handleSingleImport()}
-                    >
-                      立即导入
-                    </Button>
-                  </Form>
-                </Space>
-              )
-            },
-            {
-              key: "batch",
-              label: "批量导入",
-              children: (
-                <Space direction="vertical" size={16} style={{ width: "100%" }}>
-                  {batchError ? (
-                    <Alert
-                      message={getApiErrorMessage(batchError, "批量导入失败")}
-                      description={renderErrorDetails(batchError)}
-                      showIcon
-                      type="error"
-                    />
-                  ) : null}
+                      {singleError ? (
+                        <Alert
+                          message={getApiErrorMessage(singleError, "导入失败")}
+                          description={renderErrorDetails(singleError)}
+                          showIcon
+                          type="error"
+                        />
+                      ) : null}
 
-                  {batchResult ? (
-                    <Alert
-                      message={`批量导入完成：共 ${batchResult.total} 条，成功 ${batchResult.success} 条，失败 ${batchResult.failed} 条`}
-                      showIcon
-                      type={batchResult.failed > 0 ? "warning" : "success"}
-                    />
-                  ) : null}
+                      {singleResult ? (
+                        <Alert
+                          message="导入成功"
+                          description={
+                            <Space wrap>
+                              <Typography.Text strong>
+                                {singleResult.account.email}
+                              </Typography.Text>
+                              <Tag color="success">
+                                {singleResult.account.status}
+                              </Tag>
+                            </Space>
+                          }
+                          showIcon
+                          type="success"
+                        />
+                      ) : null}
 
-                  <Form form={batchForm} layout="vertical">
-                    <Form.Item
-                      label="账号记录"
-                      name="records"
-                      rules={[{ required: true, message: "请粘贴账号记录" }]}
-                    >
-                      <Input.TextArea
-                        autoSize={{ minRows: 8, maxRows: 16 }}
-                        placeholder={[
-                          '{"email":"owner@outlook.com","refreshToken":"xxx","clientId":"xxx"}',
-                          "owner1@outlook.com,refresh-token-1,client-id-1",
-                          "owner2@outlook.com,refresh-token-2,client-id-2,Owner 2,https://graph.microsoft.com/Mail.ReadWrite https://graph.microsoft.com/Mail.Send https://graph.microsoft.com/User.Read offline_access",
-                          "owner3@outlook.com\trefresh-token-3\tclient-id-3"
-                        ].join("\n")}
-                      />
-                    </Form.Item>
-                    <Button
-                      type="primary"
-                      disabled={!isAuthenticated}
-                      loading={isBinding}
-                      onClick={() => void handleBatchImport()}
-                    >
-                      开始批量导入
-                    </Button>
-                  </Form>
-
-                  {batchResult ? (
-                    <List
-                      bordered
-                      dataSource={batchResult.results}
-                      locale={{ emptyText: "暂无明细" }}
-                      renderItem={(item) => (
-                        <List.Item
-                          actions={[
-                            <Tag key="status" color={item.status === "success" ? "success" : "error"}>
-                              {item.status}
-                            </Tag>
+                      <Form
+                        form={singleForm}
+                        layout="vertical"
+                        onFinish={() => void handleSingleImport()}
+                      >
+                        <Form.Item
+                          label="邮箱地址"
+                          name="email"
+                          rules={[
+                            { required: true, message: "请输入邮箱地址" },
+                            { type: "email", message: "请输入有效的邮箱地址" },
                           ]}
                         >
-                          <List.Item.Meta
-                            title={<Typography.Text strong>{item.email}</Typography.Text>}
-                            description={
-                              item.status === "success"
-                                ? `accountId: ${item.accountId ?? "未返回"}`
-                                : item.message
-                            }
+                          <Input
+                            prefix={<MailOutlined />}
+                            placeholder="owner@outlook.com"
                           />
-                        </List.Item>
-                      )}
-                    />
-                  ) : null}
-                </Space>
-              )
-            }
-          ]}
-        />
-      </Card>
+                        </Form.Item>
+                        <Form.Item
+                          label="Refresh Token"
+                          name="refreshToken"
+                          rules={[
+                            { required: true, message: "请输入 refreshToken" },
+                          ]}
+                        >
+                          <Input.TextArea
+                            autoSize={{ minRows: 3, maxRows: 6 }}
+                            placeholder="微软 refresh token"
+                          />
+                        </Form.Item>
+                        <Form.Item
+                          label="Client ID"
+                          name="clientId"
+                          rules={[
+                            { required: true, message: "请输入 clientId" },
+                          ]}
+                        >
+                          <Input placeholder="public client id" />
+                        </Form.Item>
+                        <Form.Item label="显示名称" name="displayName">
+                          <Input placeholder="可选；默认以后端 /me 返回为准" />
+                        </Form.Item>
+                        <Collapse
+                          ghost
+                          activeKey={advancedScopeOpen ? ["scope"] : []}
+                          onChange={(keys) =>
+                            setAdvancedScopeOpen(keys.includes("scope"))
+                          }
+                          items={[
+                            {
+                              key: "scope",
+                              label: "高级选项",
+                              children: (
+                                <Form.Item
+                                  label="Scope"
+                                  name="scope"
+                                  initialValue={[...defaultMicrosoftScopes]}
+                                  extra="默认不传 scope，后端会自动使用推荐范围；只有需要自定义时才在这里调整。"
+                                >
+                                  <Select
+                                    mode="multiple"
+                                    options={scopeOptions}
+                                    placeholder="选择需要的授权范围"
+                                  />
+                                </Form.Item>
+                              ),
+                            },
+                          ]}
+                        />
+                        <Button
+                          htmlType="submit"
+                          type="primary"
+                          disabled={!isAuthenticated}
+                          loading={isBinding}
+                        >
+                          立即导入
+                        </Button>
+                      </Form>
+                    </Space>
+                  ),
+                },
+                {
+                  key: "batch",
+                  label: "批量导入",
+                  children: (
+                    <Space
+                      direction="vertical"
+                      size={16}
+                      style={{ width: "100%" }}
+                    >
+                      {batchError ? (
+                        <Alert
+                          message={getApiErrorMessage(
+                            batchError,
+                            "批量导入失败",
+                          )}
+                          description={renderErrorDetails(batchError)}
+                          showIcon
+                          type="error"
+                        />
+                      ) : null}
 
-      <Card className="surface-card">
-        <div className="card-title-row">
-          <div>
-            <h3>账号密码直连（Outlook / Hotmail / Gmail）</h3>
-            <p>通过 IMAP/SMTP 直接绑定，无需走 OAuth 授权流程。</p>
-          </div>
-          <Tag color="blue">
-            <KeyOutlined /> IMAP 直连
-          </Tag>
-        </div>
+                      {batchResult ? (
+                        <Alert
+                          message={`批量导入完成：共 ${batchResult.total} 条，成功 ${batchResult.success} 条，失败 ${batchResult.failed} 条`}
+                          showIcon
+                          type={batchResult.failed > 0 ? "warning" : "success"}
+                        />
+                      ) : null}
 
-        <Form layout="vertical">
-          <Form.Item label="邮箱地址" required>
-            <Input
-              prefix={<MailOutlined />}
-              placeholder="your-email@outlook.com 或 your-email@gmail.com"
-              value={imapEmail}
-              onChange={(event) => setImapEmail(event.target.value)}
-            />
-          </Form.Item>
-          <Form.Item
-            label="邮箱密码"
-            required
-            extra={
-              /^[^\s@]+@(gmail\.com|googlemail\.com)$/i.test(imapEmail.trim()) ? (
-                <Typography.Text type="warning" style={{ fontSize: 12 }}>
-                  Gmail 须使用<strong>应用密码</strong>（非账号登录密码）。请先开启两步验证，然后前往{" "}
-                  <Typography.Link href="https://myaccount.google.com/apppasswords" target="_blank" rel="noopener noreferrer">
-                    myaccount.google.com/apppasswords
-                  </Typography.Link>{" "}
-                  生成应用密码后填入此处。
-                </Typography.Text>
-              ) : null
-            }
-          >
-            <Input.Password
-              prefix={<LockOutlined />}
-              placeholder={/^[^\s@]+@(gmail\.com|googlemail\.com)$/i.test(imapEmail.trim()) ? "Gmail 应用密码（16位）" : "邮箱登录密码"}
-              value={imapPassword}
-              onChange={(event) => setImapPassword(event.target.value)}
-            />
-          </Form.Item>
-          <Button
-            type="primary"
-            disabled={!isAuthenticated}
-            loading={isBinding}
-            onClick={() => void handleBindCredentials()}
-          >
-            绑定账号
-          </Button>
-        </Form>
+                      <Form
+                        form={batchForm}
+                        layout="vertical"
+                        onFinish={() => void handleBatchImport()}
+                      >
+                        <Form.Item
+                          label="账号记录"
+                          name="records"
+                          rules={[
+                            { required: true, message: "请粘贴账号记录" },
+                          ]}
+                        >
+                          <Input.TextArea
+                            autoSize={{ minRows: 8, maxRows: 16 }}
+                            placeholder={[
+                              '{"email":"owner@outlook.com","refreshToken":"xxx","clientId":"xxx"}',
+                              "owner1@outlook.com,refresh-token-1,client-id-1",
+                              "owner2@outlook.com,refresh-token-2,client-id-2,Owner 2,https://graph.microsoft.com/Mail.ReadWrite https://graph.microsoft.com/Mail.Send https://graph.microsoft.com/User.Read offline_access",
+                              "owner3@outlook.com\trefresh-token-3\tclient-id-3",
+                            ].join("\n")}
+                          />
+                        </Form.Item>
+                        <Button
+                          htmlType="submit"
+                          type="primary"
+                          disabled={!isAuthenticated}
+                          loading={isBinding}
+                        >
+                          开始批量导入
+                        </Button>
+                      </Form>
 
-        <Divider style={{ margin: "16px 0 8px" }} />
-        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-          支持 <code>outlook.com</code>、<code>hotmail.com</code>、<code>live.com</code>、<code>gmail.com</code>。系统会自动识别对应的 IMAP/SMTP 服务并验证连通性。Gmail 账号请使用应用密码（App Password）而非账号登录密码。
-        </Typography.Text>
-      </Card>
-
-      <Card className="surface-card">
-        <div className="card-title-row">
-          <div>
-            <h3>已绑定账号</h3>
-            <p>展示账号状态、提供商信息和最近同步时间。</p>
-          </div>
-          <Tag color="blue">{accounts.length} 个账号</Tag>
-        </div>
-
-        <List
-          dataSource={accounts}
-          locale={{ emptyText: isAuthenticated ? "暂无已绑定账号" : "请先登录以加载账号列表" }}
-          renderItem={(account) => (
-            <List.Item
-              actions={[
-                <Tag key="status" color={account.status === "connected" ? "success" : "warning"}>
-                  {account.status}
-                </Tag>
+                      {batchResult ? (
+                        <List
+                          bordered
+                          dataSource={batchResult.results}
+                          locale={{ emptyText: "暂无明细" }}
+                          renderItem={(item) => (
+                            <List.Item
+                              actions={[
+                                <Tag
+                                  key="status"
+                                  color={
+                                    item.status === "success"
+                                      ? "success"
+                                      : "error"
+                                  }
+                                >
+                                  {item.status}
+                                </Tag>,
+                              ]}
+                            >
+                              <List.Item.Meta
+                                title={
+                                  <Typography.Text strong>
+                                    {item.email}
+                                  </Typography.Text>
+                                }
+                                description={
+                                  item.status === "success"
+                                    ? `accountId: ${item.accountId ?? "未返回"}`
+                                    : item.message
+                                }
+                              />
+                            </List.Item>
+                          )}
+                        />
+                      ) : null}
+                    </Space>
+                  ),
+                },
               ]}
+            />
+          </Card>
+
+          <Card className="surface-card binding-card">
+            <div className="card-title-row">
+              <div>
+                <h3>账号密码直连（Outlook / Hotmail / Gmail）</h3>
+                <p>通过 IMAP/SMTP 直接绑定，无需走 OAuth 授权流程。</p>
+              </div>
+              <Tag color="blue">
+                <KeyOutlined /> IMAP 直连
+              </Tag>
+            </div>
+
+            <Form
+              layout="vertical"
+              onFinish={() => void handleBindCredentials()}
             >
-              <List.Item.Meta
-                avatar={
-                  account.status === "connected" ? (
-                    <CheckCircleFilled style={{ color: "#16a34a", fontSize: 18 }} />
-                  ) : (
-                    <SyncOutlined spin={account.status === "syncing"} style={{ color: "#f59e0b", fontSize: 18 }} />
-                  )
+              <Form.Item label="邮箱地址" required>
+                <Input
+                  prefix={<MailOutlined />}
+                  placeholder="your-email@outlook.com 或 your-email@gmail.com"
+                  value={imapEmail}
+                  onChange={(event) => setImapEmail(event.target.value)}
+                />
+              </Form.Item>
+              <Form.Item
+                label="邮箱密码"
+                required
+                extra={
+                  /^[^\s@]+@(gmail\.com|googlemail\.com)$/i.test(
+                    imapEmail.trim(),
+                  ) ? (
+                    <Typography.Text type="warning" style={{ fontSize: 12 }}>
+                      Gmail 须使用<strong>应用密码</strong>
+                      （非账号登录密码）。请先开启两步验证，然后前往{" "}
+                      <Typography.Link
+                        href="https://myaccount.google.com/apppasswords"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                      >
+                        myaccount.google.com/apppasswords
+                      </Typography.Link>{" "}
+                      生成应用密码后填入此处。
+                    </Typography.Text>
+                  ) : null
                 }
-                title={
-                  <Space wrap>
-                    <Typography.Text strong>{account.email}</Typography.Text>
-                    <Tag>{account.providerLabel}</Tag>
-                  </Space>
-                }
-                description={`最近同步 ${dayjs(account.lastSyncAt).format("MM月DD日 HH:mm")} · ${dayjs(account.lastSyncAt).fromNow()} · ${account.unreadCount} 封未读`}
-              />
-            </List.Item>
-          )}
-        />
-      </Card>
+              >
+                <Input.Password
+                  prefix={<LockOutlined />}
+                  placeholder={
+                    /^[^\s@]+@(gmail\.com|googlemail\.com)$/i.test(
+                      imapEmail.trim(),
+                    )
+                      ? "Gmail 应用密码（16位）"
+                      : "邮箱登录密码"
+                  }
+                  value={imapPassword}
+                  onChange={(event) => setImapPassword(event.target.value)}
+                />
+              </Form.Item>
+              <Button
+                htmlType="submit"
+                type="primary"
+                disabled={!isAuthenticated}
+                loading={isBinding}
+              >
+                绑定账号
+              </Button>
+            </Form>
+
+            <Divider style={{ margin: "16px 0 8px" }} />
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              支持 <code>outlook.com</code>、<code>hotmail.com</code>、
+              <code>live.com</code>、<code>gmail.com</code>
+              。系统会自动识别对应的 IMAP/SMTP 服务并验证连通性。Gmail
+              账号请使用应用密码（App Password）而非账号登录密码。
+            </Typography.Text>
+          </Card>
+
+          <Card className="surface-card bound-accounts-card">
+            <div className="card-title-row">
+              <div>
+                <h3>已绑定账号</h3>
+                <p>展示账号状态、提供商信息和最近同步时间。</p>
+              </div>
+              <Tag color="blue">{accounts.length} 个账号</Tag>
+            </div>
+
+            <List
+              className="bound-account-list"
+              dataSource={accounts}
+              pagination={
+                accounts.length > 8
+                  ? { pageSize: 8, showSizeChanger: false, size: "small" }
+                  : false
+              }
+              locale={{
+                emptyText: isAuthenticated
+                  ? "暂无已绑定账号"
+                  : "请先登录以加载账号列表",
+              }}
+              renderItem={(account) => (
+                <List.Item
+                  actions={[
+                    <Tag
+                      key="status"
+                      color={
+                        account.status === "connected" ? "success" : "warning"
+                      }
+                    >
+                      {account.status === "connected"
+                        ? "已连接"
+                        : account.status === "syncing"
+                          ? "同步中"
+                          : "需关注"}
+                    </Tag>,
+                  ]}
+                >
+                  <List.Item.Meta
+                    avatar={
+                      account.status === "connected" ? (
+                        <CheckCircleFilled className="account-status-icon connected" />
+                      ) : (
+                        <SyncOutlined
+                          className="account-status-icon attention"
+                          spin={account.status === "syncing"}
+                        />
+                      )
+                    }
+                    title={
+                      <Space wrap>
+                        <Typography.Text strong>
+                          {account.email}
+                        </Typography.Text>
+                        <Tag>{account.providerLabel}</Tag>
+                      </Space>
+                    }
+                    description={`最近同步 ${dayjs(account.lastSyncAt).format("MM月DD日 HH:mm")} · ${dayjs(account.lastSyncAt).fromNow()} · ${account.unreadCount} 封未读`}
+                  />
+                </List.Item>
+              )}
+            />
+          </Card>
+        </>
+      ) : (
+        <div className="auth-onboarding-panel">
+          <span className="section-label">登录后可用</span>
+          <h3>统一管理多种邮箱连接</h3>
+          <p>
+            登录后可使用 OAuth 授权、Microsoft Token 批量导入或 IMAP/SMTP
+            密码直连，并集中查看连接状态。
+          </p>
+          <div className="onboarding-points">
+            <span>
+              <CheckCircleFilled /> OAuth 授权
+            </span>
+            <span>
+              <CheckCircleFilled /> Token 批量导入
+            </span>
+            <span>
+              <CheckCircleFilled /> 连接状态检查
+            </span>
+          </div>
+        </div>
+      )}
     </section>
   );
 }

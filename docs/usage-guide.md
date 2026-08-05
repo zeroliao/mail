@@ -1,153 +1,120 @@
-# 邮箱账号管理系统 — 使用说明
+# MailOps 使用说明
 
-## 1. 系统概述
+## 启动与登录
 
-多邮箱账号管理系统，支持 Gmail / Outlook / Hotmail 账号的邮件收发，提供 Web 界面操作。
+在 repository 根目录运行：
 
-## 2. 启动服务
-
-```bash
-# 后端（端口 3002）
-cd mail-backend
-npx tsx watch src/server.ts
-
-# 前端（端口 5173）
-cd frontend
-npx vite --host 0.0.0.0 --port 5173
+```powershell
+npm start
 ```
 
-启动后浏览器打开：http://localhost:5173
+启动后访问 `http://localhost:5173`。首次启动会从 `.env.example` 创建根 `.env`；使用前应检查其中的 `API_ADMIN_USERNAME`、`API_ADMIN_PASSWORD`、`JWT_SECRET` 和 `TOKEN_ENCRYPTION_KEY`，不要在文档或日志中记录真实值。
 
-## 3. 使用流程
+登录后才能使用账号、邮件和停止服务 API。JWT 保存在当前浏览器的 `localStorage`，退出登录会清除它。
 
-### 3.1 登录系统
+## 添加邮箱账号
 
-首次打开会进入「登录与账户绑定」页面：
+### Provider OAuth
 
-- **用户名**：`admin`
-- **密码**：`admin1234567890x`（见 `mail-backend/.env` 中 `API_ADMIN_PASSWORD`）
+在“连接”页面选择 Gmail 或 Outlook / Hotmail，跳转到 provider 完成授权。对应 callback URI 必须与根 `.env` 和 provider 控制台完全一致：
 
-登录后会看到「已认证」绿色标签。
+- Gmail：`http://localhost:3000/api/v1/accounts/oauth/google/callback`
+- Microsoft：`http://localhost:3000/api/v1/accounts/oauth/microsoft/callback`
 
-### 3.2 绑定邮箱账户
+没有配置 provider client credentials 时，对应 OAuth 入口不可用。
 
-登录后可绑定 Gmail 或 Outlook/Hotmail 账户：
+### Microsoft Token 直连
 
-1. 在「登录与账户绑定」页面，找到对应提供商卡片
-2. 点击「绑定账户」按钮
-3. 跳转到 Google/Microsoft 登录页面完成授权
-4. 授权成功后自动返回，账户出现在「已绑定账户」列表
+适用于已有 Microsoft public client `refresh_token` 和 `client_id` 的账号。单条导入需要：
 
-#### Gmail 前置条件
+- `email`
+- `refreshToken`
+- `clientId`
+- 可选 `displayName` 和自定义 `scope`
 
-需在 [Google Cloud Console](https://console.cloud.google.com/apis/credentials) 配置：
+提交时后端先用 refresh token 换取 access token，再调用 Microsoft Graph `/me` 验证账号。验证成功后才保存为 `ACTIVE`；provider 返回的邮箱优先于输入邮箱。
 
-- OAuth 2.0 客户端 ID：`268838574870-e839o69mrck0m3vd84ohfo9l1coj9mam`
-- 已获授权的重定向 URI 必须包含：
-  ```
-  http://localhost:3002/api/v1/accounts/oauth/google/callback
-  ```
+批量导入每次最多 100 条，支持：
 
-#### Microsoft 前置条件
+- 每行一个 JSON object，如 `{"email":"owner@outlook.com","refreshToken":"...","clientId":"..."}`
+- 每行按 `email, refreshToken, clientId, displayName, scope` 排列，分隔符可用逗号、Tab 或 `|`
 
-需在 Azure Portal 配置 App Registration，并在 `.env` 中填写：
-```
-MICROSOFT_CLIENT_ID=<你的客户端ID>
-MICROSOFT_CLIENT_SECRET=<你的客户端密钥>
-```
+批量任务逐条串行执行，单条失败不会中止后续账号。完成后查看成功、失败数量和逐条错误明细。
 
-### 3.3 查看收件箱
+外部数据若为 `邮箱----密码----client_id----refresh_token`，不能原样粘贴到当前 UI：需要转换为上述列序和分隔符。Token 直连不依赖邮箱密码；不要为了兼容表格格式在 UI 中保存无用密码。
 
-绑定账户后，点击顶部导航「收件箱」：
+### IMAP / SMTP 密码直连
 
-- **统一收件箱**：合并显示所有账户的邮件
-- **单账户模式**：左侧点击特定账户切换
-- **文件夹**：收件箱 / 已标星 / 已发送 / 草稿 / 归档
-- **筛选**：顶部可按 全部 / 未读 / 已标星 / 附件 筛选
-- **搜索**：按主题、发件人或预览内容搜索
+输入邮箱和密码后，系统先验证 IMAP 连接，再按域名选择默认服务器并保存连接信息。也可以通过 API 提供自定义 IMAP/SMTP host 和 port。
 
-### 3.4 撰写/回复/转发邮件
+### 重复账号
 
-点击顶部「撰写」或邮件详情中的「回复」/「转发」：
+数据库以 `(provider, email)` 唯一标识账号。相同 provider 和邮箱再次导入不会创建重复记录，而是更新凭据、恢复已归档账号、设置为 `ACTIVE`，并保留原有标签。
 
-1. 选择发件账户
-2. 填写收件人、抄送、密送、主题
-3. 编辑正文（支持富文本：加粗、斜体、列表、链接）
-4. 点击「发送邮件」
+## 账号状态
 
-草稿会自动保存。
+| 后端状态       | UI 含义  | 说明                                                              |
+| -------------- | -------- | ----------------------------------------------------------------- |
+| `ACTIVE`       | 账号可用 | 正常状态；access token 过期不等于异常，访问 provider 前会尝试刷新 |
+| `DISCONNECTED` | 需要处理 | 连接已断开，需要重新绑定或更新凭据                                |
+| `ERROR`        | 需要处理 | 账号被标记为错误，需要检查 provider 错误和凭据                    |
+| `ARCHIVED`     | 不显示   | 软删除状态，普通账号列表不会返回；再次导入可恢复为 `ACTIVE`       |
 
-### 3.5 账户管理
+当前自动流转是：OAuth/导入成功或重复导入成功到 `ACTIVE`，删除到 `ARCHIVED`，归档账号再次导入回到 `ACTIVE`。`DISCONNECTED` 和 `ERROR` 目前由账号更新接口设置，不要假设一次 provider 请求失败会自动持久化状态。
 
-点击顶部「账户」进入管理页面：
+前端只将 `ACTIVE` 映射为“账号可用”，其他可见状态统一显示“需要处理”。判断账号是否正常应结合状态和一次真实收件测试，不应仅根据 access token 到期时间判断。
 
-- 查看所有已绑定账户的状态、提供商、上次同步时间
-- 添加新账户
-- 移除已有账户
+## 标签与筛选
 
-## 4. API 接口
+收件箱和“账户”页面都可以编辑账号标签：
 
-后端提供 RESTful API，基础路径：`http://localhost:3002/api/v1`
+- 每个账号最多 12 个标签，每个标签最多 24 个字符。
+- 标签会自动 trim、去空和去重。
+- 已有标签可跨账号复用，也可以直接新增。
+- 收件箱可先按一个或多个标签缩小账号范围，再切换具体账号。
+- 账户管理可按标签筛选账号。
 
-### 认证
+标签存于账号 `metadata.labels`，刷新页面后仍会保留。更新账号凭据或重复导入时也会保留已有标签。
 
-```
-POST /api/v1/auth/login
-Body: { "username": "admin", "password": "..." }
-返回: { "token": "JWT..." }
-```
+## 收件箱与邮件
 
-后续请求 Header 带上：`Authorization: Bearer <token>`
+- “全部账户”合并显示当前标签范围内的邮件；也可以切换单个账号。
+- 支持收件箱、已标星、已发送、草稿和归档文件夹。
+- 支持文本搜索以及未读、已标星、附件快捷筛选。
+- 邮件详情支持 HTML 安全渲染、纯文本回退和验证码识别复制。
+- 撰写页支持选择发件账号、收件人/抄送/密送、富文本正文、回复和转发。
 
-### 主要接口
+真实收件、分页和发信依赖 provider 状态。发生错误时先查看页面错误明细和后端日志，但不得输出 token、密码或完整 provider 响应中的敏感字段。
 
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| GET | /health | 健康检查 |
-| GET | /accounts | 已绑定账户列表 |
-| POST | /accounts/oauth/google/url | 获取 Gmail OAuth 授权链接 |
-| POST | /accounts/oauth/microsoft/url | 获取 Microsoft OAuth 授权链接 |
-| GET | /accounts/:id/messages | 获取指定账户邮件列表 |
-| GET | /accounts/:id/messages/:msgId | 获取邮件详情 |
-| POST | /accounts/:id/messages/send | 发送邮件 |
-| GET | /mail | 统一收件箱（跨账户） |
-| DELETE | /accounts/:id | 移除账户 |
+## 停止服务
 
-### 发送邮件示例
+- 命令行：在根目录运行 `npm stop` 或 `./stop.ps1`。
+- 页面：登录后点击右上角停止按钮并确认。
 
-```bash
-curl -X POST http://localhost:3002/api/v1/accounts/<accountId>/messages/send \
-  -H "Authorization: Bearer <token>" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "subject": "测试邮件",
-    "to": [{"email": "test@example.com"}],
-    "cc": [],
-    "bcc": [],
-    "html": "<p>这是一封测试邮件</p>",
-    "text": "这是一封测试邮件"
-  }'
-```
+页面会调用受 JWT 保护的 `POST /api/v1/system/shutdown`。该接口只接受本机请求，并只适用于 Windows 本机启动器；Docker 或远程部署使用对应的进程管理命令。停止完成后，再次使用需重新运行启动脚本或桌面快捷方式。
 
-## 5. 环境变量说明
+## 主要 API
 
-配置文件位于 `mail-backend/.env`：
+API base URL 是 `http://localhost:3000/api/v1`，完整交互文档位于 `http://localhost:3000/docs`。
 
-| 变量 | 说明 | 默认值 |
-|------|------|--------|
-| PORT | 后端端口 | 3002 |
-| DATABASE_URL | SQLite 数据库路径 | file:./prisma/dev.db |
-| JWT_SECRET | JWT 签名密钥 | — |
-| API_ADMIN_USERNAME | 管理员用户名 | admin |
-| API_ADMIN_PASSWORD | 管理员密码 | — |
-| GOOGLE_CLIENT_ID | Gmail OAuth 客户端 ID | — |
-| GOOGLE_CLIENT_SECRET | Gmail OAuth 密钥 | — |
-| GOOGLE_OAUTH_REDIRECT_URI | Gmail 回调地址 | http://localhost:3002/api/v1/accounts/oauth/google/callback |
-| MICROSOFT_CLIENT_ID | Microsoft OAuth 客户端 ID | — |
-| MICROSOFT_CLIENT_SECRET | Microsoft OAuth 密钥 | — |
+| Method   | Path                                       | Purpose                      |
+| -------- | ------------------------------------------ | ---------------------------- |
+| `POST`   | `/auth/login`                              | 管理员登录                   |
+| `GET`    | `/health`                                  | 健康检查                     |
+| `GET`    | `/config/oauth-providers`                  | OAuth 可用性与 callback 配置 |
+| `GET`    | `/accounts`                                | 账号列表                     |
+| `POST`   | `/accounts/oauth/{provider}/url`           | 创建 OAuth URL               |
+| `GET`    | `/accounts/oauth/{provider}/callback`      | OAuth callback               |
+| `POST`   | `/accounts/bind-oauth`                     | Microsoft Token 单条导入     |
+| `POST`   | `/accounts/bind-oauth/batch`               | Microsoft Token 批量导入     |
+| `POST`   | `/accounts/bind-credentials`               | IMAP 密码直连                |
+| `PUT`    | `/accounts/:accountId/labels`              | 更新账号标签                 |
+| `DELETE` | `/accounts/:accountId`                     | 软删除账号                   |
+| `GET`    | `/accounts/:accountId/messages`            | 指定账号邮件列表             |
+| `GET`    | `/accounts/:accountId/messages/:messageId` | 邮件详情                     |
+| `POST`   | `/accounts/:accountId/messages/send`       | 指定账号发信                 |
+| `GET`    | `/mail`                                    | 跨账号邮件列表               |
+| `POST`   | `/mail/send`                               | 跨账号发信入口               |
+| `POST`   | `/system/shutdown`                         | 本机停止服务                 |
 
-## 6. 技术栈
-
-- **前端**：React 18 + TypeScript + Ant Design + Zustand + Vite
-- **后端**：Fastify + Prisma + SQLite + googleapis + zod
-- **认证**：JWT + OAuth 2.0（Gmail / Microsoft Graph）
+除 health、OAuth callback 等显式公共端点外，业务 API 均要求 `Authorization: Bearer <token>`。

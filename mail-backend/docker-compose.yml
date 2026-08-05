@@ -6,30 +6,12 @@ services:
     env_file:
       - .env
     environment:
-      DATABASE_URL: "postgresql://mailhub:mailhub@postgres:5432/mailhub?schema=public"
+      DATABASE_URL: "file:/data/dev.db"
     ports:
       - "3000:3000"
-    depends_on:
-      postgres:
-        condition: service_healthy
+    volumes:
+      - mail_data:/data
     command: sh -c "npx prisma migrate deploy && node dist/server.js"
 
-  postgres:
-    image: postgres:16-alpine
-    restart: unless-stopped
-    environment:
-      POSTGRES_DB: mailhub
-      POSTGRES_USER: mailhub
-      POSTGRES_PASSWORD: mailhub
-    ports:
-      - "5432:5432"
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U mailhub -d mailhub"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
-
 volumes:
-  postgres_data:
+  mail_data:

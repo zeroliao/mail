@@ -6,7 +6,10 @@ import { CryptoService } from "../../lib/crypto";
 import { AppError } from "../../lib/errors";
 import { providerKindMap, providerLabelMap } from "../../lib/provider";
 import { providerRegistry } from "../../providers/registry";
-import { DEFAULT_MICROSOFT_GRAPH_SCOPES, MicrosoftMailProvider } from "../../providers/microsoft-mail.provider";
+import {
+  DEFAULT_MICROSOFT_GRAPH_SCOPES,
+  MicrosoftMailProvider,
+} from "../../providers/microsoft-mail.provider";
 import { OAuthTokens, RefreshTokenOptions } from "../../types/provider";
 
 type OAuthUrlOptions = {
@@ -60,7 +63,7 @@ export class AccountsService {
     const accounts = await prisma.account.findMany({
       where: { deletedAt: null },
       orderBy: { createdAt: "desc" },
-      select: publicAccountSelect
+      select: publicAccountSelect,
     });
 
     return accounts.map(withProviderPresentation);
@@ -69,7 +72,7 @@ export class AccountsService {
   async getAccount(accountId: string) {
     const account = await prisma.account.findFirst({
       where: { id: accountId, deletedAt: null },
-      select: publicAccountSelect
+      select: publicAccountSelect,
     });
 
     if (!account) {
@@ -80,37 +83,52 @@ export class AccountsService {
   }
 
   async createImportedAccount(input: CreateImportedAccountInput) {
+    const existing = await prisma.account.findUnique({
+      where: {
+        provider_email: {
+          provider: input.provider,
+          email: input.email,
+        },
+      },
+      select: { metadata: true },
+    });
+    const metadata = preserveAccountLabels(input.metadata, existing?.metadata);
+
     const account = await prisma.account.upsert({
       where: {
         provider_email: {
           provider: input.provider,
-          email: input.email
-        }
+          email: input.email,
+        },
       },
       create: {
         provider: input.provider,
         email: input.email,
         displayName: input.displayName ?? null,
         accessToken: this.cryptoService.encrypt(input.accessToken),
-        refreshToken: input.refreshToken ? this.cryptoService.encrypt(input.refreshToken) : null,
+        refreshToken: input.refreshToken
+          ? this.cryptoService.encrypt(input.refreshToken)
+          : null,
         tokenType: input.tokenType ?? null,
         expiresAt: input.expiresAt ?? null,
         scope: input.scope.join(" "),
-        metadata: toPrismaJson(input.metadata),
-        deletedAt: null
+        metadata: toPrismaJson(metadata),
+        deletedAt: null,
       },
       update: {
         displayName: input.displayName ?? null,
         accessToken: this.cryptoService.encrypt(input.accessToken),
-        refreshToken: input.refreshToken ? this.cryptoService.encrypt(input.refreshToken) : null,
+        refreshToken: input.refreshToken
+          ? this.cryptoService.encrypt(input.refreshToken)
+          : null,
         tokenType: input.tokenType ?? null,
         expiresAt: input.expiresAt ?? null,
         scope: input.scope.join(" "),
-        metadata: toPrismaJson(input.metadata),
+        metadata: toPrismaJson(metadata),
         status: "ACTIVE",
-        deletedAt: null
+        deletedAt: null,
       },
-      select: publicAccountSelect
+      select: publicAccountSelect,
     });
 
     return withProviderPresentation(account);
@@ -128,37 +146,54 @@ export class AccountsService {
       throw new AppError("Microsoft provider is not available", 500);
     }
 
-    const scope = input.scope && input.scope.length > 0 ? input.scope : DEFAULT_MICROSOFT_GRAPH_SCOPES;
+    const scope =
+      input.scope && input.scope.length > 0
+        ? input.scope
+        : DEFAULT_MICROSOFT_GRAPH_SCOPES;
     const tenant = input.tenant || "consumers";
 
     // 连通性校验 + 换取首个 access_token（失败直接抛出携带微软原始错误体的 AppError）。
-    const exchange = await microsoftProvider.exchangeRefreshTokenForPublicClient({
-      refreshToken: input.refreshToken,
-      clientId: input.clientId,
-      scope,
-      tenant
-    });
+    const exchange =
+      await microsoftProvider.exchangeRefreshTokenForPublicClient({
+        refreshToken: input.refreshToken,
+        clientId: input.clientId,
+        scope,
+        tenant,
+      });
 
     // 优先使用微软返回的 profile email；owner 传入的 email 仅作兜底/校验展示。
     const email = exchange.profile.email || input.email;
-    const displayName = input.displayName ?? exchange.profile.displayName ?? null;
+    const displayName =
+      input.displayName ?? exchange.profile.displayName ?? null;
 
     // refresh_token：优先用微软轮换后返回的新值，否则保留入参。
     const refreshTokenToStore = exchange.refreshToken ?? input.refreshToken;
 
-    const metadata: Prisma.JsonValue = {
-      authMethod: OAUTH_REFRESH_AUTH_METHOD,
-      clientId: this.cryptoService.encrypt(input.clientId),
-      tenant,
-      isPublicClient: true
-    };
+    const existing = await prisma.account.findUnique({
+      where: {
+        provider_email: {
+          provider: MailProvider.MICROSOFT,
+          email,
+        },
+      },
+      select: { metadata: true },
+    });
+    const metadata: Prisma.JsonValue = mergeAccountMetadata(
+      existing?.metadata,
+      {
+        authMethod: OAUTH_REFRESH_AUTH_METHOD,
+        clientId: this.cryptoService.encrypt(input.clientId),
+        tenant,
+        isPublicClient: true,
+      },
+    );
 
     const account = await prisma.account.upsert({
       where: {
         provider_email: {
           provider: MailProvider.MICROSOFT,
-          email
-        }
+          email,
+        },
       },
       create: {
         provider: MailProvider.MICROSOFT,
@@ -171,7 +206,7 @@ export class AccountsService {
         scope: exchange.scope.join(" "),
         status: "ACTIVE",
         metadata,
-        deletedAt: null
+        deletedAt: null,
       },
       update: {
         displayName,
@@ -182,9 +217,9 @@ export class AccountsService {
         scope: exchange.scope.join(" "),
         status: "ACTIVE",
         metadata,
-        deletedAt: null
+        deletedAt: null,
       },
-      select: publicAccountSelect
+      select: publicAccountSelect,
     });
 
     return withProviderPresentation(account);
@@ -202,9 +237,17 @@ export class AccountsService {
     for (const item of items) {
       try {
         const account = await this.bindOAuthRefreshAccount(item);
-        results.push({ email: account.email, status: "success", message: "绑定成功", accountId: account.id });
+        results.push({
+          email: account.email,
+          status: "success",
+          message: "绑定成功",
+          accountId: account.id,
+        });
       } catch (error: any) {
-        const message = error instanceof AppError ? error.message : error?.message || "未知错误";
+        const message =
+          error instanceof AppError
+            ? error.message
+            : error?.message || "未知错误";
         results.push({ email: item.email, status: "failed", message });
       }
     }
@@ -214,7 +257,7 @@ export class AccountsService {
       total: items.length,
       success,
       failed: items.length - success,
-      results
+      results,
     };
   }
 
@@ -226,12 +269,28 @@ export class AccountsService {
       data: {
         displayName: input.displayName,
         status: input.status,
-        metadata: toPrismaJson(input.metadata)
+        metadata: toPrismaJson(input.metadata),
       },
-      select: publicAccountSelect
+      select: publicAccountSelect,
     });
 
     return withProviderPresentation(account);
+  }
+
+  async updateAccountLabels(accountId: string, labels: string[]) {
+    const account = await this.ensureRawAccount(accountId);
+    const normalizedLabels = normalizeAccountLabels(labels);
+    const metadata = mergeAccountMetadata(account.metadata, {
+      labels: normalizedLabels,
+    });
+
+    const updated = await prisma.account.update({
+      where: { id: accountId },
+      data: { metadata },
+      select: publicAccountSelect,
+    });
+
+    return withProviderPresentation(updated);
   }
 
   async deleteAccount(accountId: string) {
@@ -241,9 +300,9 @@ export class AccountsService {
       where: { id: accountId },
       data: {
         deletedAt: new Date(),
-        status: "ARCHIVED"
+        status: "ARCHIVED",
       },
-      select: publicAccountSelect
+      select: publicAccountSelect,
     });
 
     return withProviderPresentation(account);
@@ -253,7 +312,9 @@ export class AccountsService {
     const providerService = providerRegistry.get(options.provider);
     const state = randomUUID();
     const redirectUri =
-      options.provider === MailProvider.GOOGLE ? env.GOOGLE_OAUTH_REDIRECT_URI : env.MICROSOFT_OAUTH_REDIRECT_URI;
+      options.provider === MailProvider.GOOGLE
+        ? env.GOOGLE_OAUTH_REDIRECT_URI
+        : env.MICROSOFT_OAUTH_REDIRECT_URI;
 
     await prisma.oAuthState.create({
       data: {
@@ -261,34 +322,45 @@ export class AccountsService {
         state,
         redirectUri,
         expiresAt: new Date(Date.now() + 10 * 60 * 1000),
-        metadata: options.frontendRedirectUri ? { frontendRedirectUri: options.frontendRedirectUri } : Prisma.JsonNull
-      }
+        metadata: options.frontendRedirectUri
+          ? { frontendRedirectUri: options.frontendRedirectUri }
+          : Prisma.JsonNull,
+      },
     });
 
     return {
       authUrl: providerService.buildAuthorizationUrl(state),
-      state
+      state,
     };
   }
 
   async completeOAuth(provider: MailProvider, state: string, code: string) {
     const stateRecord = await prisma.oAuthState.findUnique({
-      where: { state }
+      where: { state },
     });
 
-    if (!stateRecord || stateRecord.provider !== provider || stateRecord.expiresAt < new Date()) {
+    if (
+      !stateRecord ||
+      stateRecord.provider !== provider ||
+      stateRecord.expiresAt < new Date()
+    ) {
       throw new AppError("OAuth state is invalid or expired", 400);
     }
 
     const providerService = providerRegistry.get(provider);
     const exchange = await providerService.exchangeCode(code);
-    const account = await this.upsertOAuthAccount(provider, exchange.profile.email, exchange.profile.displayName ?? null, exchange);
+    const account = await this.upsertOAuthAccount(
+      provider,
+      exchange.profile.email,
+      exchange.profile.displayName ?? null,
+      exchange,
+    );
 
     await prisma.oAuthState.delete({ where: { state } });
 
     return {
       account: withProviderPresentation(account),
-      frontendRedirectUri: readFrontendRedirectUri(stateRecord.metadata)
+      frontendRedirectUri: readFrontendRedirectUri(stateRecord.metadata),
     };
   }
 
@@ -301,35 +373,47 @@ export class AccountsService {
       return { account, accessToken };
     }
 
-    const refreshToken = account.refreshToken ? this.cryptoService.decrypt(account.refreshToken) : null;
+    const refreshToken = account.refreshToken
+      ? this.cryptoService.decrypt(account.refreshToken)
+      : null;
 
-    const shouldRefresh = forceRefresh || (account.expiresAt && account.expiresAt.getTime() - Date.now() < 60_000);
+    const shouldRefresh =
+      forceRefresh ||
+      (account.expiresAt && account.expiresAt.getTime() - Date.now() < 60_000);
 
     if (shouldRefresh) {
       if (!refreshToken) {
-        throw new AppError("Stored token expired and no refresh token is available", 401);
+        throw new AppError(
+          "Stored token expired and no refresh token is available",
+          401,
+        );
       }
 
       const provider = providerRegistry.get(account.provider);
       // public client（oauth-refresh）账号需用 per-account clientId 刷新，且无 client_secret。
       const refreshOptions = this.buildRefreshOptions(account);
-      const refreshed = await provider.refreshAccessToken(refreshToken, refreshOptions);
+      const refreshed = await provider.refreshAccessToken(
+        refreshToken,
+        refreshOptions,
+      );
       const updated = await this.persistTokenRefresh(account.id, refreshed);
 
       return {
         account: updated,
-        accessToken: refreshed.accessToken
+        accessToken: refreshed.accessToken,
       };
     }
 
     return {
       account,
-      accessToken
+      accessToken,
     };
   }
 
   // 从 account.metadata 解析 per-account 刷新所需的 clientId/scope/tenant（oauth-refresh 账号）。
-  private buildRefreshOptions(account: Account): RefreshTokenOptions | undefined {
+  private buildRefreshOptions(
+    account: Account,
+  ): RefreshTokenOptions | undefined {
     const metadata = account.metadata;
     if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) {
       return undefined;
@@ -340,47 +424,59 @@ export class AccountsService {
       return undefined;
     }
 
-    const encryptedClientId = typeof record.clientId === "string" ? record.clientId : null;
+    const encryptedClientId =
+      typeof record.clientId === "string" ? record.clientId : null;
     if (!encryptedClientId) {
       return undefined;
     }
 
     return {
       clientId: this.cryptoService.decrypt(encryptedClientId),
-      scope: account.scope ? account.scope.split(" ").filter(Boolean) : undefined,
-      tenant: typeof record.tenant === "string" ? record.tenant : undefined
+      scope: account.scope
+        ? account.scope.split(" ").filter(Boolean)
+        : undefined,
+      tenant: typeof record.tenant === "string" ? record.tenant : undefined,
     };
   }
 
-  private async upsertOAuthAccount(provider: MailProvider, email: string, displayName: string | null, tokens: OAuthTokens) {
+  private async upsertOAuthAccount(
+    provider: MailProvider,
+    email: string,
+    displayName: string | null,
+    tokens: OAuthTokens,
+  ) {
     const account = await prisma.account.upsert({
       where: {
         provider_email: {
           provider,
-          email
-        }
+          email,
+        },
       },
       create: {
         provider,
         email,
         displayName,
         accessToken: this.cryptoService.encrypt(tokens.accessToken),
-        refreshToken: tokens.refreshToken ? this.cryptoService.encrypt(tokens.refreshToken) : null,
+        refreshToken: tokens.refreshToken
+          ? this.cryptoService.encrypt(tokens.refreshToken)
+          : null,
         tokenType: tokens.tokenType ?? null,
         expiresAt: tokens.expiresAt ?? null,
-        scope: tokens.scope.join(" ")
+        scope: tokens.scope.join(" "),
       },
       update: {
         displayName,
         accessToken: this.cryptoService.encrypt(tokens.accessToken),
-        refreshToken: tokens.refreshToken ? this.cryptoService.encrypt(tokens.refreshToken) : undefined,
+        refreshToken: tokens.refreshToken
+          ? this.cryptoService.encrypt(tokens.refreshToken)
+          : undefined,
         tokenType: tokens.tokenType ?? null,
         expiresAt: tokens.expiresAt ?? null,
         scope: tokens.scope.join(" "),
         status: "ACTIVE",
-        deletedAt: null
+        deletedAt: null,
       },
-      select: publicAccountSelect
+      select: publicAccountSelect,
     });
 
     return withProviderPresentation(account);
@@ -391,17 +487,19 @@ export class AccountsService {
       where: { id: accountId },
       data: {
         accessToken: this.cryptoService.encrypt(tokens.accessToken),
-        refreshToken: tokens.refreshToken ? this.cryptoService.encrypt(tokens.refreshToken) : undefined,
+        refreshToken: tokens.refreshToken
+          ? this.cryptoService.encrypt(tokens.refreshToken)
+          : undefined,
         tokenType: tokens.tokenType ?? null,
         expiresAt: tokens.expiresAt ?? null,
-        scope: tokens.scope.join(" ")
-      }
+        scope: tokens.scope.join(" "),
+      },
     });
   }
 
   private async ensureRawAccount(accountId: string) {
     const account = await prisma.account.findFirst({
-      where: { id: accountId, deletedAt: null }
+      where: { id: accountId, deletedAt: null },
     });
 
     if (!account) {
@@ -424,16 +522,20 @@ const publicAccountSelect = {
   lastSyncAt: true,
   metadata: true,
   createdAt: true,
-  updatedAt: true
+  updatedAt: true,
 } satisfies Prisma.AccountSelect;
 
-const readFrontendRedirectUri = (value: Prisma.JsonValue | null): string | null => {
+const readFrontendRedirectUri = (
+  value: Prisma.JsonValue | null,
+): string | null => {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return null;
   }
 
   const candidate = (value as Record<string, unknown>).frontendRedirectUri;
-  return typeof candidate === "string" && candidate.length > 0 ? candidate : null;
+  return typeof candidate === "string" && candidate.length > 0
+    ? candidate
+    : null;
 };
 
 const toPrismaJson = (value: Prisma.JsonValue | undefined) => {
@@ -444,8 +546,55 @@ const toPrismaJson = (value: Prisma.JsonValue | undefined) => {
   return value === null ? Prisma.JsonNull : value;
 };
 
-const withProviderPresentation = <T extends { provider: MailProvider }>(account: T) => ({
+const toMetadataRecord = (
+  value: Prisma.JsonValue | null | undefined,
+): Record<string, Prisma.JsonValue> => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return {};
+  }
+
+  return value as Record<string, Prisma.JsonValue>;
+};
+
+const normalizeAccountLabels = (labels: string[]) =>
+  Array.from(
+    new Set(labels.map((label) => label.trim()).filter(Boolean)),
+  ).slice(0, 12);
+
+const readAccountLabels = (metadata: Prisma.JsonValue | null | undefined) => {
+  const labels = toMetadataRecord(metadata).labels;
+  if (!Array.isArray(labels)) {
+    return [];
+  }
+
+  return normalizeAccountLabels(
+    labels.filter((label): label is string => typeof label === "string"),
+  );
+};
+
+export const mergeAccountMetadata = (
+  current: Prisma.JsonValue | null | undefined,
+  updates: Record<string, Prisma.JsonValue>,
+): Prisma.JsonObject => ({
+  ...toMetadataRecord(current),
+  ...updates,
+});
+
+const preserveAccountLabels = (
+  next: Prisma.JsonValue | undefined,
+  current: Prisma.JsonValue | null | undefined,
+) => {
+  const labels = readAccountLabels(current);
+  return labels.length ? mergeAccountMetadata(next, { labels }) : next;
+};
+
+const withProviderPresentation = <
+  T extends { provider: MailProvider; metadata?: Prisma.JsonValue | null },
+>(
+  account: T,
+) => ({
   ...account,
   providerKey: providerKindMap[account.provider],
-  providerLabel: providerLabelMap[account.provider]
+  providerLabel: providerLabelMap[account.provider],
+  labels: readAccountLabels(account.metadata),
 });
