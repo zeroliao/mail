@@ -163,11 +163,28 @@ test("PUT /api/v1/accounts/:accountId/labels 可新增和复用账号标签", as
     method: "PUT",
     url: `/api/v1/accounts/${account.id}/labels`,
     headers: { authorization: `Bearer ${token}` },
-    payload: { labels: ["主账号", "客户", "主账号"] },
+    payload: {
+      labels: ["主账号", "客户", "主账号"],
+      serviceNotes: {
+        主账号: "owner@example.com",
+        客户: "client workspace",
+        已删除: "should not persist",
+      },
+      serviceStatuses: {
+        GitHub: "unavailable",
+      },
+    },
   });
 
   assert.equal(response.statusCode, 200, response.body);
   assert.deepEqual(response.json().labels, ["主账号", "客户"]);
+  assert.deepEqual(response.json().serviceNotes, {
+    主账号: "owner@example.com",
+    客户: "client workspace",
+  });
+  assert.deepEqual(response.json().serviceStatuses, {
+    GitHub: "unavailable",
+  });
   assert.equal(response.json().metadata.authMethod, "oauth-refresh");
 });
 
@@ -196,6 +213,11 @@ test("POST /api/v1/accounts/bind-oauth/batch 返回逐条结果汇总", async ()
     account.labels,
     ["主账号", "客户"],
     "重新绑定不应清除已有标签",
+  );
+  assert.deepEqual(
+    account.serviceStatuses,
+    { GitHub: "unavailable" },
+    "重新绑定不应清除服务收码异常标记",
   );
 });
 

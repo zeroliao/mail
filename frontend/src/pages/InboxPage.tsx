@@ -8,10 +8,8 @@ import {
   InboxOutlined,
   PaperClipOutlined,
   ReloadOutlined,
-  RollbackOutlined,
   SendOutlined,
   StarOutlined,
-  TagOutlined,
 } from "@ant-design/icons";
 import {
   App,
@@ -36,10 +34,12 @@ import AccountLabelEditor from "../components/AccountLabelEditor";
 import HtmlMailViewer from "../components/HtmlMailViewer";
 import { ALL_ACCOUNTS_ID } from "../services/mockData";
 import { useMailAppStore } from "../store/useMailAppStore";
-import type { FolderKey, MailDetail } from "../types/mail";
+import type { FolderKey, MailAccount, MailDetail } from "../types/mail";
 import {
   accountMatchesLabels,
+  getAccountServiceNote,
   getReusableAccountLabels,
+  getServiceDirectory,
 } from "../utils/accountLabels";
 import { extractVerificationCode } from "../utils/verificationCode";
 
@@ -68,10 +68,14 @@ const toPlainPreview = (value: string) => {
 
 function DetailContent({
   message,
+  account,
+  selectedService,
   onReply,
   onForward,
 }: {
   message: MailDetail;
+  account?: MailAccount;
+  selectedService: string;
   onReply: () => Promise<void>;
   onForward: () => Promise<void>;
 }) {
@@ -103,26 +107,24 @@ function DetailContent({
         <div className="detail-heading-row">
           <div className="detail-heading-copy">
             <Space wrap size={6}>
-              <Tag color="blue">{message.accountDisplayName}</Tag>
+              {(selectedService
+                ? [selectedService]
+                : (account?.labels ?? [])
+              ).map((label) => (
+                <Tag color="blue" key={label}>
+                  {label}
+                </Tag>
+              ))}
+              {!selectedService && !account?.labels.length ? (
+                <Tag color="default">未归类服务</Tag>
+              ) : null}
+              <Tag>{account?.email ?? message.accountDisplayName}</Tag>
               <Tag>{message.providerLabel}</Tag>
               {message.attachments ? (
                 <Tag icon={<PaperClipOutlined />}>{message.attachments}</Tag>
               ) : null}
             </Space>
             <h3>{message.subject}</h3>
-          </div>
-
-          <div className="detail-actions">
-            <Button
-              type="primary"
-              icon={<RollbackOutlined />}
-              onClick={() => void onReply()}
-            >
-              回复
-            </Button>
-            <Button icon={<SendOutlined />} onClick={() => void onForward()}>
-              转发
-            </Button>
           </div>
         </div>
 
@@ -161,6 +163,12 @@ function DetailContent({
         </div>
 
         <div className="detail-meta">
+          {selectedService && account ? (
+            <span className="service-context-row">
+              <strong>{selectedService} 账号</strong>
+              {getAccountServiceNote(account, selectedService) || "未填写备注"}
+            </span>
+          ) : null}
           <span>
             <strong>收件人</strong>
             {message.to.join(", ")}
@@ -171,6 +179,16 @@ function DetailContent({
               {message.cc.join(", ")}
             </span>
           ) : null}
+        </div>
+
+        <div className="detail-actions detail-secondary-actions">
+          <span>低频操作</span>
+          <Button type="link" size="small" onClick={() => void onReply()}>
+            回复
+          </Button>
+          <Button type="link" size="small" onClick={() => void onForward()}>
+            转发
+          </Button>
         </div>
       </div>
 
@@ -196,6 +214,7 @@ export default function InboxPage() {
     folderCounts,
     mailPagination,
     isLoadingMessages,
+    messageListError,
     isLoadingMessageDetail,
     messageDetailError,
     selectAccount,
@@ -221,6 +240,10 @@ export default function InboxPage() {
     () => getReusableAccountLabels(accounts),
     [accounts],
   );
+  const serviceDirectory = useMemo(
+    () => getServiceDirectory(accounts),
+    [accounts],
+  );
   const labelScopedAccounts = useMemo(
     () =>
       accounts.filter((account) => accountMatchesLabels(account, labelFilter)),
@@ -241,21 +264,30 @@ export default function InboxPage() {
     () =>
       messages.filter((item) => {
         const query = searchQuery.trim().toLowerCase();
+        const messageAccount = accounts.find(
+          (account) => account.id === item.accountId,
+        );
         const matchesQuery =
           !query ||
           item.subject.toLowerCase().includes(query) ||
           item.fromName.toLowerCase().includes(query) ||
-          item.preview.toLowerCase().includes(query);
+          item.preview.toLowerCase().includes(query) ||
+          Boolean(
+            messageAccount &&
+            [
+              ...messageAccount.labels,
+              ...Object.values(messageAccount.serviceNotes ?? {}),
+              messageAccount.email,
+            ].some((value) => value.toLowerCase().includes(query)),
+          );
 
         const matchesFilter =
           quickFilter === "all" ||
           (quickFilter === "unread" && !item.read) ||
           (quickFilter === "starred" && item.flagged) ||
-          (quickFilter === "attachments" && item.attachments > 0);
+          (quickFilter === "codes" &&
+            Boolean(extractVerificationCode([item.subject, item.preview])));
 
-        const messageAccount = accounts.find(
-          (account) => account.id === item.accountId,
-        );
         const matchesAccountLabels =
           !labelFilter.length ||
           Boolean(
@@ -317,18 +349,53 @@ export default function InboxPage() {
 
         <Button
           block
-          className={`all-accounts-button ${activeAccountId === ALL_ACCOUNTS_ID ? "active" : ""}`}
+          className={`all-accounts-button ${activeAccountId === ALL_ACCOUNTS_ID && !labelFilter.length ? "active" : ""}`}
           icon={<InboxOutlined />}
-          onClick={() => void selectAccount(ALL_ACCOUNTS_ID)}
+          onClick={() => {
+            setLabelFilter([]);
+            void selectAccount(ALL_ACCOUNTS_ID);
+          }}
         >
-          <span>统一收件箱</span>
+          <span>全部服务</span>
           <span className="nav-count">
             {accounts.reduce((sum, account) => sum + account.unreadCount, 0)}
           </span>
         </Button>
 
+        <div className="mail-nav-section service-directory-nav">
+          <span className="section-label">先选服务</span>
+          <nav className="service-menu" aria-label="验证码服务">
+            {serviceDirectory.length ? (
+              serviceDirectory.map((service) => {
+                const isSelected = labelFilter.includes(service.name);
+                return (
+                  <Button
+                    block
+                    className={isSelected ? "active" : ""}
+                    key={service.name}
+                    type="text"
+                    onClick={() => {
+                      setLabelFilter(isSelected ? [] : [service.name]);
+                      void selectAccount(ALL_ACCOUNTS_ID);
+                    }}
+                  >
+                    <span className="service-menu-label">{service.name}</span>
+                    <span className="service-menu-meta">
+                      {service.accountCount} 个邮箱
+                    </span>
+                  </Button>
+                );
+              })
+            ) : (
+              <p className="service-empty-copy">
+                还没有服务绑定。先在“服务标签”中给邮箱添加服务。
+              </p>
+            )}
+          </nav>
+        </div>
+
         <div className="mail-nav-section">
-          <span className="section-label">文件夹</span>
+          <span className="section-label">低频文件夹</span>
           <nav className="folder-menu" aria-label="邮件文件夹">
             {(Object.keys(folderLabels) as FolderKey[]).map((folder) => (
               <Button
@@ -347,20 +414,6 @@ export default function InboxPage() {
         </div>
 
         <div className="mail-nav-section account-scope">
-          <label className="section-label" htmlFor="account-label-filter">
-            标签筛选
-          </label>
-          <Select
-            allowClear
-            id="account-label-filter"
-            maxTagCount="responsive"
-            mode="multiple"
-            options={reusableLabels.map((label) => ({ label, value: label }))}
-            placeholder="全部标签"
-            suffixIcon={<TagOutlined />}
-            value={labelFilter}
-            onChange={setLabelFilter}
-          />
           <label
             className="section-label account-select-label"
             htmlFor="account-scope-select"
@@ -375,8 +428,8 @@ export default function InboxPage() {
             options={[
               {
                 label: labelFilter.length
-                  ? `标签范围内 ${labelScopedAccounts.length} 个账户`
-                  : "全部可用账户",
+                  ? `${labelFilter[0]} · ${labelScopedAccounts.length} 个邮箱`
+                  : "全部可用邮箱",
                 value: ALL_ACCOUNTS_ID,
               },
               ...labelScopedAccounts.map((account) => ({
@@ -388,19 +441,22 @@ export default function InboxPage() {
           />
           <p className="account-scope-meta">
             {activeAccountId === ALL_ACCOUNTS_ID
-              ? `${labelScopedAccounts.length} 个账户纳入当前收件范围`
-              : `${activeAccount?.providerLabel ?? "邮箱"} · ${activeAccount?.status === "connected" ? "账号可用" : "需要处理"}`}
+              ? labelFilter.length
+                ? `${labelScopedAccounts.length} 个邮箱可接收 ${labelFilter[0]} 验证码`
+                : `${labelScopedAccounts.length} 个邮箱纳入当前收件范围`
+              : `${activeAccount?.providerLabel ?? "邮箱"} · ${activeAccount?.status === "connected" ? "邮箱可用" : "需要处理"}`}
           </p>
           {activeAccount ? (
             <div className="inbox-account-labels">
-              <span className="section-label">账号标签</span>
+              <span className="section-label">服务绑定与备注</span>
               <AccountLabelEditor
                 compact
                 accountEmail={activeAccount.email}
                 availableLabels={reusableLabels}
                 labels={activeAccount.labels}
-                onChange={(labels) =>
-                  updateAccountLabels(activeAccount.id, labels)
+                serviceNotes={activeAccount.serviceNotes}
+                onChange={(labels, serviceNotes) =>
+                  updateAccountLabels(activeAccount.id, labels, serviceNotes)
                 }
               />
             </div>
@@ -412,17 +468,38 @@ export default function InboxPage() {
         <div className="panel-heading">
           <div>
             <span className="section-label">
-              {activeAccountId === ALL_ACCOUNTS_ID
-                ? "全部账户"
-                : (activeAccount?.email ?? "当前账户")}
+              {labelFilter[0]
+                ? `当前服务：${labelFilter[0]}`
+                : activeAccountId === ALL_ACCOUNTS_ID
+                  ? "全部账户"
+                  : (activeAccount?.email ?? "当前账户")}
             </span>
-            <h3 id="mail-list-title">{folderLabels[activeFolder]}</h3>
+            <h3 id="mail-list-title">
+              {quickFilter === "codes"
+                ? "验证码邮件"
+                : folderLabels[activeFolder]}
+            </h3>
           </div>
           <div className="panel-counter">
             <ClockCircleOutlined />
-            <span>{mailPagination.total} 封</span>
+            <span>{visibleMessages.length} 封可见</span>
           </div>
         </div>
+
+        {messageListError ? (
+          <Alert
+            action={
+              <Button size="small" onClick={() => void refreshMailbox()}>
+                重试
+              </Button>
+            }
+            className="mail-list-error"
+            description="已有缓存邮件仍会保留。确认网络或 VPN 可用后重试实时同步。"
+            message={messageListError}
+            showIcon
+            type="warning"
+          />
+        ) : null}
 
         {isLoadingMessages ? (
           <Skeleton
@@ -450,6 +527,13 @@ export default function InboxPage() {
               const isActive =
                 messageId === item.id ||
                 (!showDrawerDetail && selectedMessage?.id === item.id);
+              const itemAccount = accounts.find(
+                (account) => account.id === item.accountId,
+              );
+              const serviceNote =
+                labelFilter[0] && itemAccount
+                  ? getAccountServiceNote(itemAccount, labelFilter[0])
+                  : "";
               return (
                 <button
                   aria-pressed={isActive}
@@ -475,6 +559,11 @@ export default function InboxPage() {
                   </span>
                   <span className="message-footer">
                     <span>{item.accountDisplayName}</span>
+                    {serviceNote ? (
+                      <span className="message-service-note">
+                        {serviceNote}
+                      </span>
+                    ) : null}
                     <span className="message-indicators">
                       {item.flagged ? <FlagFilled aria-label="已标星" /> : null}
                       {item.attachments ? (
@@ -535,7 +624,11 @@ export default function InboxPage() {
           ) : null}
           {selectedMessage ? (
             <DetailContent
+              account={accounts.find(
+                (account) => account.id === selectedMessage.accountId,
+              )}
               message={selectedMessage}
+              selectedService={labelFilter[0] ?? ""}
               onReply={handleReply}
               onForward={handleForward}
             />
@@ -553,15 +646,6 @@ export default function InboxPage() {
         placement="right"
         title={selectedMessage?.subject || "邮件详情"}
         width={screens.md ? 520 : "100%"}
-        extra={
-          <Button
-            icon={<SendOutlined />}
-            size="small"
-            onClick={() => void handleForward()}
-          >
-            转发
-          </Button>
-        }
       >
         {isLoadingMessageDetail ? (
           <Skeleton active paragraph={{ rows: 2 }} />
@@ -581,7 +665,11 @@ export default function InboxPage() {
         ) : null}
         {selectedMessage ? (
           <DetailContent
+            account={accounts.find(
+              (account) => account.id === selectedMessage.accountId,
+            )}
             message={selectedMessage}
+            selectedService={labelFilter[0] ?? ""}
             onReply={handleReply}
             onForward={handleForward}
           />

@@ -6,7 +6,6 @@ import {
   MailOutlined,
   PoweroffOutlined,
   SafetyCertificateOutlined,
-  SendOutlined,
   SyncOutlined,
   UserOutlined,
 } from "@ant-design/icons";
@@ -29,20 +28,25 @@ import { mailApi } from "../services/mailApi";
 import { useMailAppStore } from "../store/useMailAppStore";
 
 const navItems = [
-  { key: "/inbox", label: "收件箱", icon: <MailOutlined /> },
-  { key: "/compose", label: "写邮件", icon: <SendOutlined /> },
-  { key: "/accounts", label: "账户管理", icon: <AppstoreOutlined /> },
-  { key: "/auth", label: "添加账户", icon: <LinkOutlined /> },
+  { key: "/inbox", label: "验证码收件台", icon: <MailOutlined /> },
+  { key: "/accounts", label: "服务与邮箱", icon: <AppstoreOutlined /> },
+  { key: "/auth", label: "添加邮箱", icon: <LinkOutlined /> },
 ];
 
 const pageMeta = {
   "/auth": {
-    title: "添加与绑定账户",
-    description: "连接 OAuth、Token 或邮箱密码账户",
+    title: "添加与绑定邮箱",
+    description: "把可接收验证码的邮箱接入工作区",
   },
-  "/inbox": { title: "收件箱", description: "跨账户查看、筛选和处理邮件" },
-  "/compose": { title: "写邮件", description: "选择发件身份并创建邮件" },
-  "/accounts": { title: "账户管理", description: "检查连接状态与同步健康度" },
+  "/inbox": {
+    title: "验证码收件台",
+    description: "按服务快速找到可用邮箱并复制验证码",
+  },
+  "/compose": { title: "写邮件", description: "低频辅助能力" },
+  "/accounts": {
+    title: "服务与邮箱",
+    description: "维护服务可使用的邮箱和账号备注",
+  },
 };
 
 export default function AppShell() {
@@ -60,6 +64,7 @@ export default function AppShell() {
   const isLoadingMessages = useMailAppStore((state) => state.isLoadingMessages);
   const setSearchQuery = useMailAppStore((state) => state.setSearchQuery);
   const setQuickFilter = useMailAppStore((state) => state.setQuickFilter);
+  const refreshMailbox = useMailAppStore((state) => state.refreshMailbox);
   const logout = useMailAppStore((state) => state.logout);
 
   const unreadCount = accounts.reduce(
@@ -68,7 +73,7 @@ export default function AppShell() {
   );
   const selectedKey =
     navItems.find((item) => location.pathname.startsWith(item.key))?.key ??
-    "/inbox";
+    (location.pathname.startsWith("/compose") ? "/compose" : "/inbox");
   const currentMeta =
     pageMeta[selectedKey as keyof typeof pageMeta] ?? pageMeta["/inbox"];
   const menuItems = navItems.map((item) => ({
@@ -109,11 +114,12 @@ export default function AppShell() {
           block
           className="compose-shortcut"
           disabled={!isAuthenticated}
-          icon={<SendOutlined />}
+          icon={<SyncOutlined />}
           type="primary"
-          onClick={() => navigate("/compose")}
+          loading={isLoadingMessages}
+          onClick={() => void refreshMailbox()}
         >
-          写新邮件
+          刷新验证码
         </Button>
 
         <nav aria-label="主导航">
@@ -125,6 +131,16 @@ export default function AppShell() {
             onClick={({ key }) => navigate(key)}
           />
         </nav>
+
+        {isAuthenticated ? (
+          <Button
+            className="low-frequency-link"
+            type="text"
+            onClick={() => navigate("/compose")}
+          >
+            低频：写邮件
+          </Button>
+        ) : null}
 
         <div className="sidebar-status">
           <div className="service-status">
@@ -173,9 +189,9 @@ export default function AppShell() {
             <div className="topbar-tools">
               <Input.Search
                 allowClear
-                aria-label="搜索邮件"
+                aria-label="搜索验证码邮件"
                 className="topbar-search"
-                placeholder="搜索主题、发件人或正文预览"
+                placeholder="搜索验证码、服务、发件人或正文预览"
                 value={searchQuery}
                 onChange={(event) => setSearchQuery(event.target.value)}
               />
@@ -185,12 +201,12 @@ export default function AppShell() {
                 options={[
                   { label: "全部", value: "all" },
                   { label: "未读", value: "unread" },
+                  { label: "验证码", value: "codes" },
                   { label: "已标星", value: "starred" },
-                  { label: "附件", value: "attachments" },
                 ]}
                 onChange={(value) =>
                   setQuickFilter(
-                    value as "all" | "unread" | "starred" | "attachments",
+                    value as "all" | "unread" | "codes" | "starred",
                   )
                 }
               />

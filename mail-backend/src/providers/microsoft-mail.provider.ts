@@ -3,7 +3,12 @@ import { env } from "../config/env";
 import { AppError } from "../lib/errors";
 import { normalizeMicrosoftMessage } from "../lib/mail";
 import { SendMailInput } from "../types/mail";
-import { MailProviderService, OAuthExchangeResult, OAuthTokens, RefreshTokenOptions } from "../types/provider";
+import {
+  MailProviderService,
+  OAuthExchangeResult,
+  OAuthTokens,
+  RefreshTokenOptions,
+} from "../types/provider";
 
 const graphBaseUrl = "https://graph.microsoft.com/v1.0";
 
@@ -11,10 +16,11 @@ export const DEFAULT_MICROSOFT_GRAPH_SCOPES = [
   "https://graph.microsoft.com/Mail.ReadWrite",
   "https://graph.microsoft.com/Mail.Send",
   "https://graph.microsoft.com/User.Read",
-  "offline_access"
+  "offline_access",
 ];
 
-const tokenEndpoint = (tenant: string) => `https://login.microsoftonline.com/${tenant}/oauth2/v2.0/token`;
+const tokenEndpoint = (tenant: string) =>
+  `https://login.microsoftonline.com/${tenant}/oauth2/v2.0/token`;
 
 export class MicrosoftMailProvider implements MailProviderService {
   readonly provider = MailProvider.MICROSOFT;
@@ -47,36 +53,39 @@ export class MicrosoftMailProvider implements MailProviderService {
     const tokens = await this.requestToken({
       grant_type: "authorization_code",
       code,
-      redirect_uri: env.MICROSOFT_OAUTH_REDIRECT_URI
+      redirect_uri: env.MICROSOFT_OAUTH_REDIRECT_URI,
     });
 
     const profile = await this.fetchProfile(tokens.accessToken);
 
     return {
       ...tokens,
-      profile
+      profile,
     };
   }
 
-  async refreshAccessToken(refreshToken: string, options?: RefreshTokenOptions): Promise<OAuthTokens> {
+  async refreshAccessToken(
+    refreshToken: string,
+    options?: RefreshTokenOptions,
+  ): Promise<OAuthTokens> {
     if (options?.clientId) {
       return this.requestPublicClientToken(
         {
           grant_type: "refresh_token",
-          refresh_token: refreshToken
+          refresh_token: refreshToken,
         },
         {
           clientId: options.clientId,
           clientSecret: options.clientSecret,
           scope: options.scope,
-          tenant: options.tenant
-        }
+          tenant: options.tenant,
+        },
       );
     }
 
     return this.requestToken({
       grant_type: "refresh_token",
-      refresh_token: refreshToken
+      refresh_token: refreshToken,
     });
   }
 
@@ -90,33 +99,43 @@ export class MicrosoftMailProvider implements MailProviderService {
     const tokens = await this.requestPublicClientToken(
       {
         grant_type: "refresh_token",
-        refresh_token: input.refreshToken
+        refresh_token: input.refreshToken,
       },
       {
         clientId: input.clientId,
         clientSecret: input.clientSecret,
         scope: input.scope,
-        tenant: input.tenant
-      }
+        tenant: input.tenant,
+      },
     );
 
     const profile = await this.fetchProfile(tokens.accessToken);
 
     return {
       ...tokens,
-      profile
+      profile,
     };
   }
 
-  private async fetchProfile(accessToken: string): Promise<{ email: string; displayName: string | null }> {
-    const profileResponse = await fetch(`${graphBaseUrl}/me?$select=displayName,mail,userPrincipalName`, {
-      headers: {
-        Authorization: `Bearer ${accessToken}`
-      }
-    });
+  private async fetchProfile(
+    accessToken: string,
+  ): Promise<{ email: string; displayName: string | null }> {
+    const profileResponse = await requestMicrosoft(
+      `${graphBaseUrl}/me?$select=displayName,mail,userPrincipalName`,
+      {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+        },
+      },
+      "graph",
+    );
 
     if (!profileResponse.ok) {
-      throw new AppError("Failed to fetch Microsoft profile", 502, await safeJson(profileResponse));
+      throw new AppError(
+        "Failed to fetch Microsoft profile",
+        502,
+        await safeJson(profileResponse),
+      );
     }
 
     const profile = await profileResponse.json();
@@ -128,11 +147,14 @@ export class MicrosoftMailProvider implements MailProviderService {
 
     return {
       email,
-      displayName: profile.displayName ?? null
+      displayName: profile.displayName ?? null,
     };
   }
 
-  async listMessages(accessToken: string, params: { folder?: string; limit: number; pageToken?: string }) {
+  async listMessages(
+    accessToken: string,
+    params: { folder?: string; limit: number; pageToken?: string },
+  ) {
     // 前端统一文件夹名 → Microsoft Graph wellKnownFolderName 映射。
     // starred 在 Graph 不是文件夹，而是 flag/flagStatus eq 'flagged' 筛选。
     const FOLDER_MAP: Record<string, string> = {
@@ -140,12 +162,13 @@ export class MicrosoftMailProvider implements MailProviderService {
       sent: "sentitems",
       drafts: "drafts",
       trash: "deleteditems",
-      archive: "archive"
+      archive: "archive",
     };
 
     const rawFolder = params.folder?.toLowerCase() ?? "";
     const isStarred = rawFolder === "starred";
-    const graphFolder = FOLDER_MAP[rawFolder] ?? (rawFolder && !isStarred ? rawFolder : "");
+    const graphFolder =
+      FOLDER_MAP[rawFolder] ?? (rawFolder && !isStarred ? rawFolder : "");
 
     let url: URL;
     if (isStarred) {
@@ -161,19 +184,23 @@ export class MicrosoftMailProvider implements MailProviderService {
     url.searchParams.set("$top", String(params.limit));
     url.searchParams.set(
       "$select",
-      "id,conversationId,parentFolderId,subject,bodyPreview,body,from,toRecipients,ccRecipients,bccRecipients,receivedDateTime,sentDateTime,isRead,hasAttachments,flag"
+      "id,conversationId,parentFolderId,subject,bodyPreview,body,from,toRecipients,ccRecipients,bccRecipients,receivedDateTime,sentDateTime,isRead,hasAttachments,flag",
     );
 
     if (params.pageToken) {
       url.searchParams.set("$skiptoken", params.pageToken);
     }
 
-    const response = await fetch(url, {
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        Prefer: 'outlook.body-content-type="text"'
-      }
-    });
+    const response = await requestMicrosoft(
+      url,
+      {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          Prefer: 'outlook.body-content-type="text"',
+        },
+      },
+      "graph",
+    );
 
     if (!response.ok) {
       await throwGraphError(response, "Failed to list Microsoft messages");
@@ -182,7 +209,7 @@ export class MicrosoftMailProvider implements MailProviderService {
     const payload = await response.json();
     return {
       messages: (payload.value ?? []).map(normalizeMicrosoftMessage),
-      nextPageToken: extractSkipToken(payload["@odata.nextLink"]) ?? null
+      nextPageToken: extractSkipToken(payload["@odata.nextLink"]) ?? null,
     };
   }
 
@@ -190,15 +217,19 @@ export class MicrosoftMailProvider implements MailProviderService {
     const url = new URL(`${graphBaseUrl}/me/messages/${messageId}`);
     url.searchParams.set(
       "$select",
-      "id,conversationId,parentFolderId,subject,bodyPreview,body,from,toRecipients,ccRecipients,bccRecipients,receivedDateTime,sentDateTime,isRead,hasAttachments"
+      "id,conversationId,parentFolderId,subject,bodyPreview,body,from,toRecipients,ccRecipients,bccRecipients,receivedDateTime,sentDateTime,isRead,hasAttachments",
     );
 
-    const response = await fetch(url, {
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        Prefer: 'outlook.body-content-type="text"'
-      }
-    });
+    const response = await requestMicrosoft(
+      url,
+      {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          Prefer: 'outlook.body-content-type="text"',
+        },
+      },
+      "graph",
+    );
 
     if (!response.ok) {
       await throwGraphError(response, "Failed to fetch Microsoft message");
@@ -208,35 +239,39 @@ export class MicrosoftMailProvider implements MailProviderService {
   }
 
   async sendMessage(accessToken: string, input: SendMailInput) {
-    const response = await fetch(`${graphBaseUrl}/me/sendMail`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        message: {
-          subject: input.subject,
-          body: {
-            contentType: input.html ? "HTML" : "Text",
-            content: input.html ?? input.text ?? ""
-          },
-          toRecipients: mapRecipients(input.to),
-          ccRecipients: mapRecipients(input.cc),
-          bccRecipients: mapRecipients(input.bcc),
-          replyTo: mapRecipients(input.replyTo),
-          attachments: input.attachments?.map((attachment) => ({
-            "@odata.type": "#microsoft.graph.fileAttachment",
-            name: attachment.filename,
-            contentType: attachment.contentType ?? "application/octet-stream",
-            contentBytes: attachment.contentBase64,
-            contentId: attachment.contentId,
-            isInline: Boolean(attachment.inline)
-          }))
+    const response = await requestMicrosoft(
+      `${graphBaseUrl}/me/sendMail`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "Content-Type": "application/json",
         },
-        saveToSentItems: true
-      })
-    });
+        body: JSON.stringify({
+          message: {
+            subject: input.subject,
+            body: {
+              contentType: input.html ? "HTML" : "Text",
+              content: input.html ?? input.text ?? "",
+            },
+            toRecipients: mapRecipients(input.to),
+            ccRecipients: mapRecipients(input.cc),
+            bccRecipients: mapRecipients(input.bcc),
+            replyTo: mapRecipients(input.replyTo),
+            attachments: input.attachments?.map((attachment) => ({
+              "@odata.type": "#microsoft.graph.fileAttachment",
+              name: attachment.filename,
+              contentType: attachment.contentType ?? "application/octet-stream",
+              contentBytes: attachment.contentBase64,
+              contentId: attachment.contentId,
+              isInline: Boolean(attachment.inline),
+            })),
+          },
+          saveToSentItems: true,
+        }),
+      },
+      "graph",
+    );
 
     if (!response.ok) {
       await throwGraphError(response, "Failed to send Microsoft email");
@@ -245,29 +280,39 @@ export class MicrosoftMailProvider implements MailProviderService {
     return {};
   }
 
-  private async requestToken(input: Record<string, string>): Promise<OAuthTokens> {
+  private async requestToken(
+    input: Record<string, string>,
+  ): Promise<OAuthTokens> {
     this.ensureConfigured();
 
     const body = new URLSearchParams({
       client_id: env.MICROSOFT_CLIENT_ID,
       scope: env.microsoftScopes.join(" "),
-      ...input
+      ...input,
     });
 
     if (env.MICROSOFT_CLIENT_SECRET) {
       body.set("client_secret", env.MICROSOFT_CLIENT_SECRET);
     }
 
-    const response = await fetch(`${this.tenantBaseUrl}/token`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/x-www-form-urlencoded"
+    const response = await requestMicrosoft(
+      `${this.tenantBaseUrl}/token`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+        },
+        body,
       },
-      body
-    });
+      "oauth-token",
+    );
 
     if (!response.ok) {
-      throw new AppError("Microsoft token request failed", 502, await safeJson(response));
+      throw new AppError(
+        "Microsoft token request failed",
+        502,
+        await safeJson(response),
+      );
     }
 
     return this.parseTokenPayload(await response.json(), env.microsoftScopes);
@@ -275,47 +320,75 @@ export class MicrosoftMailProvider implements MailProviderService {
 
   private async requestPublicClientToken(
     input: Record<string, string>,
-    options: { clientId: string; clientSecret?: string; scope?: string[]; tenant?: string }
+    options: {
+      clientId: string;
+      clientSecret?: string;
+      scope?: string[];
+      tenant?: string;
+    },
   ): Promise<OAuthTokens> {
-    const scope = options.scope && options.scope.length > 0 ? options.scope : DEFAULT_MICROSOFT_GRAPH_SCOPES;
+    const scope =
+      options.scope && options.scope.length > 0
+        ? options.scope
+        : DEFAULT_MICROSOFT_GRAPH_SCOPES;
     const tenant = options.tenant || "consumers";
 
     const body = new URLSearchParams({
       client_id: options.clientId,
       scope: scope.join(" "),
-      ...input
+      ...input,
     });
 
     if (options.clientSecret) {
       body.set("client_secret", options.clientSecret);
     }
 
-    const response = await fetch(tokenEndpoint(tenant), {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/x-www-form-urlencoded"
+    const response = await requestMicrosoft(
+      tokenEndpoint(tenant),
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+        },
+        body,
       },
-      body
-    });
+      "oauth-token",
+    );
 
     if (!response.ok) {
-      throw new AppError("Microsoft token request failed", 502, await minimalOAuthError(response));
+      throw new AppError(
+        "Microsoft token request failed",
+        502,
+        await minimalOAuthError(response),
+      );
     }
 
     return this.parseTokenPayload(await response.json(), scope);
   }
 
-  private parseTokenPayload(payload: any, fallbackScope: string[]): OAuthTokens {
+  private parseTokenPayload(
+    payload: any,
+    fallbackScope: string[],
+  ): OAuthTokens {
     if (!payload?.access_token) {
-      throw new AppError("Microsoft token response did not include access_token", 502, payload);
+      throw new AppError(
+        "Microsoft token response did not include access_token",
+        502,
+        payload,
+      );
     }
 
     return {
       accessToken: payload.access_token,
       refreshToken: payload.refresh_token ?? null,
       tokenType: payload.token_type ?? null,
-      expiresAt: payload.expires_in ? new Date(Date.now() + payload.expires_in * 1000) : null,
-      scope: typeof payload.scope === "string" ? payload.scope.split(" ").filter(Boolean) : fallbackScope
+      expiresAt: payload.expires_in
+        ? new Date(Date.now() + payload.expires_in * 1000)
+        : null,
+      scope:
+        typeof payload.scope === "string"
+          ? payload.scope.split(" ").filter(Boolean)
+          : fallbackScope,
     };
   }
 }
@@ -324,8 +397,8 @@ const mapRecipients = (list?: Array<{ email: string; name?: string | null }>) =>
   list?.map((item) => ({
     emailAddress: {
       address: item.email,
-      name: item.name ?? undefined
-    }
+      name: item.name ?? undefined,
+    },
   }));
 
 const extractSkipToken = (nextLink?: string | null) => {
@@ -359,17 +432,43 @@ export const isGraphAuthError = (status: number, body: unknown): boolean => {
   );
 };
 
-const throwGraphError = async (response: Response, message: string): Promise<never> => {
+const throwGraphError = async (
+  response: Response,
+  message: string,
+): Promise<never> => {
   const body = await safeJson(response);
-  throw new AppError(message, isGraphAuthError(response.status, body) ? 401 : 502, body);
+  throw new AppError(
+    message,
+    isGraphAuthError(response.status, body) ? 401 : 502,
+    body,
+  );
 };
 
 const minimalOAuthError = async (response: Response) => {
   const body = await safeJson(response);
   if (body && typeof body === "object" && "error" in body) {
-    const { error, error_description } = body as { error?: unknown; error_description?: unknown };
+    const { error, error_description } = body as {
+      error?: unknown;
+      error_description?: unknown;
+    };
     return { error, error_description };
   }
 
   return { status: response.status, statusText: response.statusText };
+};
+
+const requestMicrosoft = async (
+  input: string | URL,
+  init: RequestInit,
+  service: "oauth-token" | "graph",
+) => {
+  try {
+    return await fetch(input, init);
+  } catch {
+    throw new AppError(
+      "Microsoft 服务暂时无法连接，请检查网络或 VPN 后重试",
+      502,
+      { provider: "microsoft", service, code: "network_unreachable" },
+    );
+  }
 };

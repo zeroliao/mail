@@ -1,6 +1,6 @@
 import dayjs from "dayjs";
 import { create } from "zustand";
-import { getAuthToken } from "../services/http";
+import { getApiErrorMessage, getAuthToken } from "../services/http";
 import { mailApi } from "../services/mailApi";
 import { ALL_ACCOUNTS_ID } from "../services/mockData";
 import type {
@@ -17,6 +17,7 @@ import type {
   PaginatedMailResult,
   ProviderConfigResponse,
   ProviderKind,
+  ServiceReceptionStatus,
 } from "../types/mail";
 
 const emptyDraft: ComposeDraft = {
@@ -36,7 +37,7 @@ const emptyFolderCounts: FolderCountMap = {
   archive: 0,
 };
 
-type QuickFilter = "all" | "unread" | "starred" | "attachments";
+type QuickFilter = "all" | "unread" | "codes" | "starred";
 
 type MailAppStore = {
   bootstrapped: boolean;
@@ -61,6 +62,7 @@ type MailAppStore = {
   composeMode: "new" | "reply" | "forward";
   lastDraftSavedAt: string;
   isLoadingMessages: boolean;
+  messageListError: string;
   isLoadingMessageDetail: boolean;
   messageDetailError: string;
   isBindingAccount: boolean;
@@ -88,6 +90,8 @@ type MailAppStore = {
   updateAccountLabels: (
     accountId: string,
     labels: string[],
+    serviceNotes?: Record<string, string>,
+    serviceStatuses?: Record<string, ServiceReceptionStatus>,
   ) => Promise<MailAccount>;
   prepareReply: (messageId: string) => Promise<void>;
   prepareForward: (messageId: string) => Promise<void>;
@@ -193,6 +197,7 @@ export const useMailAppStore = create<MailAppStore>((set, get) => {
     composeMode: "new",
     lastDraftSavedAt: "",
     isLoadingMessages: false,
+    messageListError: "",
     isLoadingMessageDetail: false,
     messageDetailError: "",
     isBindingAccount: false,
@@ -328,6 +333,7 @@ export const useMailAppStore = create<MailAppStore>((set, get) => {
       set({
         isAuthenticated: false,
         authError: "",
+        messageListError: "",
         accounts: [],
         activeAccountId: ALL_ACCOUNTS_ID,
         folderCounts: emptyFolderCounts,
@@ -348,36 +354,49 @@ export const useMailAppStore = create<MailAppStore>((set, get) => {
       if (!accounts.length) {
         return;
       }
-      set({ isLoadingMessages: true });
-      const [folderCounts, nextPagination] = await Promise.all([
-        mailApi.getFolderCounts(activeAccountId, accounts),
-        mailApi.listMessages({
+      set({ isLoadingMessages: true, messageListError: "" });
+      try {
+        const nextPagination = await mailApi.listMessages({
           accountId: activeAccountId,
           folder: activeFolder,
           page: mailPagination.page,
           pageSize: mailPagination.pageSize,
           accounts,
-        }),
-      ]);
-      set({
-        folderCounts,
-        messages: nextPagination.items,
-        mailPagination: nextPagination,
-        isLoadingMessages: false,
-      });
-      if (!nextPagination.items.length) {
-        set({ selectedMessage: null });
-        return;
+        });
+        const folderCounts = await mailApi.getFolderCounts(
+          activeAccountId,
+          accounts,
+        );
+        set({
+          folderCounts,
+          messages: nextPagination.items,
+          mailPagination: nextPagination,
+          isLoadingMessages: false,
+          messageListError: "",
+        });
+        if (!nextPagination.items.length) {
+          set({ selectedMessage: null });
+          return;
+        }
+        await preserveSelection(
+          nextPagination.items,
+          selectedMessage?.id ?? null,
+          get().openMessage,
+        );
+      } catch (error) {
+        set({
+          isLoadingMessages: false,
+          messageListError: getApiErrorMessage(
+            error,
+            "邮件同步失败，请检查网络或 VPN 后重试",
+          ),
+        });
       }
-      await preserveSelection(
-        nextPagination.items,
-        selectedMessage?.id ?? null,
-        get().openMessage,
-      );
     },
 
     selectAccount: async (accountId) => {
       const {
+        activeAccountId: previousAccountId,
         activeFolder,
         mailPagination,
         accounts,
@@ -387,77 +406,106 @@ export const useMailAppStore = create<MailAppStore>((set, get) => {
       set({
         activeAccountId: accountId,
         isLoadingMessages: true,
+        messageListError: "",
       });
-      const [folderCounts, nextPagination] = await Promise.all([
-        mailApi.getFolderCounts(accountId, accounts),
-        mailApi.listMessages({
+      try {
+        const nextPagination = await mailApi.listMessages({
           accountId,
           folder: activeFolder,
           page: 1,
           pageSize: mailPagination.pageSize,
           accounts,
-        }),
-      ]);
+        });
+        const folderCounts = await mailApi.getFolderCounts(accountId, accounts);
 
-      set({
-        folderCounts,
-        messages: nextPagination.items,
-        mailPagination: {
-          ...nextPagination,
-          page: 1,
-        },
-        isLoadingMessages: false,
-        composeDraft: {
-          ...composeDraft,
-          accountId:
-            accountId === ALL_ACCOUNTS_ID
-              ? composeDraft.accountId || accounts[0]?.id || ""
-              : accountId,
-        },
-      });
+        set({
+          folderCounts,
+          messages: nextPagination.items,
+          mailPagination: {
+            ...nextPagination,
+            page: 1,
+          },
+          isLoadingMessages: false,
+          messageListError: "",
+          composeDraft: {
+            ...composeDraft,
+            accountId:
+              accountId === ALL_ACCOUNTS_ID
+                ? composeDraft.accountId || accounts[0]?.id || ""
+                : accountId,
+          },
+        });
 
-      if (!nextPagination.items.length) {
-        set({ selectedMessage: null });
-        return;
+        if (!nextPagination.items.length) {
+          set({ selectedMessage: null });
+          return;
+        }
+        await preserveSelection(
+          nextPagination.items,
+          selectedMessage?.id ?? null,
+          get().openMessage,
+        );
+      } catch (error) {
+        set({
+          activeAccountId: previousAccountId,
+          isLoadingMessages: false,
+          messageListError: getApiErrorMessage(
+            error,
+            "邮件同步失败，请检查网络或 VPN 后重试",
+          ),
+        });
       }
-      await preserveSelection(
-        nextPagination.items,
-        selectedMessage?.id ?? null,
-        get().openMessage,
-      );
     },
 
     selectFolder: async (folder) => {
-      const { activeAccountId, mailPagination, accounts, selectedMessage } =
-        get();
+      const {
+        activeAccountId,
+        activeFolder: previousFolder,
+        mailPagination,
+        accounts,
+        selectedMessage,
+      } = get();
       set({
         activeFolder: folder,
         isLoadingMessages: true,
+        messageListError: "",
       });
-      const nextPagination = await mailApi.listMessages({
-        accountId: activeAccountId,
-        folder,
-        page: 1,
-        pageSize: mailPagination.pageSize,
-        accounts,
-      });
-      set({
-        messages: nextPagination.items,
-        mailPagination: {
-          ...nextPagination,
+      try {
+        const nextPagination = await mailApi.listMessages({
+          accountId: activeAccountId,
+          folder,
           page: 1,
-        },
-        isLoadingMessages: false,
-      });
-      if (!nextPagination.items.length) {
-        set({ selectedMessage: null });
-        return;
+          pageSize: mailPagination.pageSize,
+          accounts,
+        });
+        set({
+          messages: nextPagination.items,
+          mailPagination: {
+            ...nextPagination,
+            page: 1,
+          },
+          isLoadingMessages: false,
+          messageListError: "",
+        });
+        if (!nextPagination.items.length) {
+          set({ selectedMessage: null });
+          return;
+        }
+        await preserveSelection(
+          nextPagination.items,
+          selectedMessage?.id ?? null,
+          get().openMessage,
+        );
+      } catch (error) {
+        set({
+          activeFolder: previousFolder,
+          isLoadingMessages: false,
+          messageListError: getApiErrorMessage(
+            error,
+            "邮件同步失败，请检查网络或 VPN 后重试",
+          ),
+        });
       }
-      await preserveSelection(
-        nextPagination.items,
-        selectedMessage?.id ?? null,
-        get().openMessage,
-      );
     },
 
     changePage: async (page) => {
@@ -468,37 +516,48 @@ export const useMailAppStore = create<MailAppStore>((set, get) => {
         accounts,
         selectedMessage,
       } = get();
-      set({ isLoadingMessages: true });
+      set({ isLoadingMessages: true, messageListError: "" });
       // 基于游标的分页：向后翻页时传递 nextPageToken
       const pageToken =
         page > mailPagination.page
           ? (mailPagination.nextPageToken ?? undefined)
           : undefined;
-      const nextPagination = await mailApi.listMessages({
-        accountId: activeAccountId,
-        folder: activeFolder,
-        page,
-        pageSize: mailPagination.pageSize,
-        accounts,
-        pageToken,
-      });
-      set({
-        messages: nextPagination.items,
-        mailPagination: {
-          ...nextPagination,
+      try {
+        const nextPagination = await mailApi.listMessages({
+          accountId: activeAccountId,
+          folder: activeFolder,
           page,
-        },
-        isLoadingMessages: false,
-      });
-      if (!nextPagination.items.length) {
-        set({ selectedMessage: null });
-        return;
+          pageSize: mailPagination.pageSize,
+          accounts,
+          pageToken,
+        });
+        set({
+          messages: nextPagination.items,
+          mailPagination: {
+            ...nextPagination,
+            page,
+          },
+          isLoadingMessages: false,
+          messageListError: "",
+        });
+        if (!nextPagination.items.length) {
+          set({ selectedMessage: null });
+          return;
+        }
+        await preserveSelection(
+          nextPagination.items,
+          selectedMessage?.id ?? null,
+          get().openMessage,
+        );
+      } catch (error) {
+        set({
+          isLoadingMessages: false,
+          messageListError: getApiErrorMessage(
+            error,
+            "邮件同步失败，请检查网络或 VPN 后重试",
+          ),
+        });
       }
-      await preserveSelection(
-        nextPagination.items,
-        selectedMessage?.id ?? null,
-        get().openMessage,
-      );
     },
 
     openMessage: async (messageId, accountId) => {
@@ -585,10 +644,17 @@ export const useMailAppStore = create<MailAppStore>((set, get) => {
       return result;
     },
 
-    updateAccountLabels: async (accountId, labels) => {
+    updateAccountLabels: async (
+      accountId,
+      labels,
+      serviceNotes = {},
+      serviceStatuses,
+    ) => {
       const updatedAccount = await mailApi.updateAccountLabels(
         accountId,
         labels,
+        serviceNotes,
+        serviceStatuses,
       );
       set({
         accounts: get().accounts.map((account) =>

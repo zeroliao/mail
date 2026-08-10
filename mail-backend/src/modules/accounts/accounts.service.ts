@@ -277,11 +277,25 @@ export class AccountsService {
     return withProviderPresentation(account);
   }
 
-  async updateAccountLabels(accountId: string, labels: string[]) {
+  async updateAccountLabels(
+    accountId: string,
+    labels: string[],
+    serviceNotes: Record<string, string> = {},
+    serviceStatuses?: Record<string, "unavailable">,
+  ) {
     const account = await this.ensureRawAccount(accountId);
     const normalizedLabels = normalizeAccountLabels(labels);
+    const normalizedServiceNotes = normalizeAccountServiceNotes(
+      serviceNotes,
+      normalizedLabels,
+    );
+    const normalizedServiceStatuses = normalizeAccountServiceStatuses(
+      serviceStatuses ?? readAccountServiceStatuses(account.metadata),
+    );
     const metadata = mergeAccountMetadata(account.metadata, {
       labels: normalizedLabels,
+      serviceNotes: normalizedServiceNotes,
+      serviceStatuses: normalizedServiceStatuses,
     });
 
     const updated = await prisma.account.update({
@@ -572,6 +586,65 @@ const readAccountLabels = (metadata: Prisma.JsonValue | null | undefined) => {
   );
 };
 
+const normalizeAccountServiceNotes = (
+  serviceNotes: Record<string, string>,
+  labels: string[],
+): Record<string, string> => {
+  const normalized: Record<string, string> = {};
+  for (const label of labels) {
+    const note = serviceNotes[label]?.trim().slice(0, 160) ?? "";
+    if (note) {
+      normalized[label] = note;
+    }
+  }
+  return normalized;
+};
+
+const normalizeAccountServiceStatuses = (
+  serviceStatuses: Record<string, string>,
+): Record<string, "unavailable"> => {
+  const normalized: Record<string, "unavailable"> = {};
+  for (const [serviceName, status] of Object.entries(serviceStatuses)) {
+    const normalizedName = serviceName.trim().slice(0, 24);
+    if (normalizedName && status === "unavailable") {
+      normalized[normalizedName] = "unavailable";
+    }
+  }
+  return Object.fromEntries(Object.entries(normalized).slice(0, 24));
+};
+
+const readAccountServiceNotes = (
+  metadata: Prisma.JsonValue | null | undefined,
+): Record<string, string> => {
+  const notes = toMetadataRecord(metadata).serviceNotes;
+  if (!notes || typeof notes !== "object" || Array.isArray(notes)) {
+    return {};
+  }
+
+  const normalized: Record<string, string> = {};
+  for (const [label, note] of Object.entries(notes)) {
+    if (typeof note === "string" && note.trim().length > 0) {
+      normalized[label] = note.trim().slice(0, 160);
+    }
+  }
+  return normalized;
+};
+
+const readAccountServiceStatuses = (
+  metadata: Prisma.JsonValue | null | undefined,
+): Record<string, "unavailable"> => {
+  const statuses = toMetadataRecord(metadata).serviceStatuses;
+  if (!statuses || typeof statuses !== "object" || Array.isArray(statuses)) {
+    return {};
+  }
+
+  return normalizeAccountServiceStatuses(
+    Object.fromEntries(
+      Object.entries(statuses).filter(([, status]) => status === "unavailable"),
+    ) as Record<string, string>,
+  );
+};
+
 export const mergeAccountMetadata = (
   current: Prisma.JsonValue | null | undefined,
   updates: Record<string, Prisma.JsonValue>,
@@ -585,7 +658,20 @@ const preserveAccountLabels = (
   current: Prisma.JsonValue | null | undefined,
 ) => {
   const labels = readAccountLabels(current);
-  return labels.length ? mergeAccountMetadata(next, { labels }) : next;
+  const serviceNotes = normalizeAccountServiceNotes(
+    readAccountServiceNotes(current),
+    labels,
+  );
+  const serviceStatuses = readAccountServiceStatuses(current);
+  return labels.length ||
+    Object.keys(serviceNotes).length ||
+    Object.keys(serviceStatuses).length
+    ? mergeAccountMetadata(next, {
+        labels,
+        serviceNotes,
+        serviceStatuses,
+      })
+    : next;
 };
 
 const withProviderPresentation = <
@@ -597,4 +683,6 @@ const withProviderPresentation = <
   providerKey: providerKindMap[account.provider],
   providerLabel: providerLabelMap[account.provider],
   labels: readAccountLabels(account.metadata),
+  serviceNotes: readAccountServiceNotes(account.metadata),
+  serviceStatuses: readAccountServiceStatuses(account.metadata),
 });

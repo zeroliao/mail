@@ -14,6 +14,7 @@ import type {
   PaginatedMailResult,
   ProviderConfigResponse,
   ProviderKind,
+  ServiceReceptionStatus,
   SendMailPayload,
 } from "../types/mail";
 
@@ -29,6 +30,8 @@ type BackendAccount = {
   lastSyncAt: string | null;
   metadata: unknown;
   labels?: string[];
+  serviceNotes?: Record<string, string>;
+  serviceStatuses?: Record<string, ServiceReceptionStatus>;
   createdAt: string;
   updatedAt: string;
 };
@@ -110,6 +113,8 @@ const toFrontendAccount = (account: BackendAccount): MailAccount => {
     unreadCount: 0,
     lastSyncAt: account.lastSyncAt || account.updatedAt,
     labels: account.labels ?? [],
+    serviceNotes: account.serviceNotes ?? {},
+    serviceStatuses: account.serviceStatuses ?? {},
     scopeText: account.scope,
   };
 };
@@ -263,10 +268,19 @@ export const mailApi = {
     };
   },
 
-  async updateAccountLabels(accountId: string, labels: string[]) {
+  async updateAccountLabels(
+    accountId: string,
+    labels: string[],
+    serviceNotes: Record<string, string> = {},
+    serviceStatuses?: Record<string, ServiceReceptionStatus>,
+  ) {
     const response = await apiClient.put<BackendAccount>(
       `/accounts/${accountId}/labels`,
-      { labels },
+      {
+        labels,
+        serviceNotes,
+        ...(serviceStatuses ? { serviceStatuses } : {}),
+      },
     );
     return toFrontendAccount(response.data);
   },

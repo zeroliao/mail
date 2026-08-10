@@ -1,10 +1,17 @@
 import dayjs from "dayjs";
 import "dayjs/locale/zh-cn";
 import relativeTime from "dayjs/plugin/relativeTime";
-import { PlusOutlined, SearchOutlined, TagOutlined } from "@ant-design/icons";
+import {
+  CheckOutlined,
+  CopyOutlined,
+  PlusOutlined,
+  SearchOutlined,
+  TagOutlined,
+} from "@ant-design/icons";
 import {
   App,
   Button,
+  Empty,
   Input,
   Modal,
   Popconfirm,
@@ -19,10 +26,17 @@ import {
 import { useMemo, useState } from "react";
 import AccountLabelEditor from "../components/AccountLabelEditor";
 import { useMailAppStore } from "../store/useMailAppStore";
-import type { ProviderKind } from "../types/mail";
+import type {
+  MailAccount,
+  ProviderKind,
+  ServiceReceptionStatus,
+} from "../types/mail";
 import {
+  accountCanRegisterService,
+  accountHasServiceIssue,
   accountMatchesLabels,
   getReusableAccountLabels,
+  getServiceDirectory,
 } from "../utils/accountLabels";
 
 dayjs.extend(relativeTime);
@@ -37,6 +51,10 @@ export default function AccountManagementPage() {
     "all" | "connected" | "attention"
   >("all");
   const [labelFilter, setLabelFilter] = useState<string[]>([]);
+  const [accountViewMode, setAccountViewMode] = useState<
+    "bound" | "available" | "blocked"
+  >("bound");
+  const [registrationServiceName, setRegistrationServiceName] = useState("");
   const accounts = useMailAppStore((state) => state.accounts);
   const bindAccount = useMailAppStore((state) => state.bindAccount);
   const removeAccount = useMailAppStore((state) => state.removeAccount);
@@ -48,6 +66,11 @@ export default function AccountManagementPage() {
     () => getReusableAccountLabels(accounts),
     [accounts],
   );
+  const serviceDirectory = useMemo(
+    () => getServiceDirectory(accounts),
+    [accounts],
+  );
+  const selectedServiceName = labelFilter.length === 1 ? labelFilter[0] : "";
 
   const filteredAccounts = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
@@ -55,23 +78,186 @@ export default function AccountManagementPage() {
       const matchesQuery =
         !normalizedQuery ||
         account.email.toLowerCase().includes(normalizedQuery) ||
-        account.displayName.toLowerCase().includes(normalizedQuery);
+        account.displayName.toLowerCase().includes(normalizedQuery) ||
+        account.labels.some((label) =>
+          label.toLowerCase().includes(normalizedQuery),
+        ) ||
+        Object.keys(account.serviceStatuses ?? {}).some((serviceName) =>
+          serviceName.toLowerCase().includes(normalizedQuery),
+        ) ||
+        Object.values(account.serviceNotes ?? {}).some((note) =>
+          note.toLowerCase().includes(normalizedQuery),
+        );
       const matchesStatus =
         statusFilter === "all" ||
         (statusFilter === "connected" && account.status === "connected") ||
         (statusFilter === "attention" && account.status !== "connected");
-      return (
-        matchesQuery &&
-        matchesStatus &&
-        accountMatchesLabels(account, labelFilter)
-      );
+      const matchesServiceView =
+        accountViewMode === "available"
+          ? accountCanRegisterService(account, selectedServiceName)
+          : accountViewMode === "blocked"
+            ? accountHasServiceIssue(account, selectedServiceName)
+            : accountMatchesLabels(account, labelFilter) &&
+              (!selectedServiceName ||
+                !accountHasServiceIssue(account, selectedServiceName));
+      return matchesQuery && matchesStatus && matchesServiceView;
     });
-  }, [accounts, labelFilter, query, statusFilter]);
+  }, [
+    accounts,
+    accountViewMode,
+    labelFilter,
+    query,
+    selectedServiceName,
+    statusFilter,
+  ]);
 
   const connectedCount = accounts.filter(
     (account) => account.status === "connected",
   ).length;
   const attentionCount = accounts.length - connectedCount;
+  const taggedCount = accounts.filter(
+    (account) => account.labels.length,
+  ).length;
+  const serviceIssueCount = accounts.reduce(
+    (count, account) =>
+      count + Object.keys(account.serviceStatuses ?? {}).length,
+    0,
+  );
+
+  const selectService = (
+    serviceName: string,
+    mode: "bound" | "available" | "blocked",
+  ) => {
+    const normalizedName = serviceName.trim();
+    setRegistrationServiceName(normalizedName);
+    setLabelFilter(normalizedName ? [normalizedName] : []);
+    setAccountViewMode(normalizedName ? mode : "bound");
+    if (!normalizedName) {
+      setStatusFilter("all");
+    } else if (mode === "available") {
+      setStatusFilter("connected");
+    } else if (mode === "blocked") {
+      setStatusFilter("all");
+    }
+  };
+
+  const handleCopyEmail = async (email: string) => {
+    try {
+      await navigator.clipboard.writeText(email);
+      message.success("邮箱已复制");
+    } catch {
+      message.error("复制失败，请检查浏览器剪贴板权限");
+    }
+  };
+
+  const handleMarkService = async (accountId: string) => {
+    if (!selectedServiceName) {
+      return;
+    }
+    try {
+      const account = accounts.find((item) => item.id === accountId);
+      if (!account) {
+        return;
+      }
+      await updateAccountLabels(
+        accountId,
+        Array.from(new Set([...account.labels, selectedServiceName])),
+        account.serviceNotes,
+        Object.fromEntries(
+          Object.entries(account.serviceStatuses ?? {}).filter(
+            ([serviceName]) => serviceName !== selectedServiceName,
+          ),
+        ),
+      );
+      message.success(`已标记为 ${selectedServiceName} 邮箱`);
+    } catch {
+      message.error("标记失败，请稍后重试");
+    }
+  };
+
+  const handleMarkServiceUnavailable = async (accountId: string) => {
+    if (!selectedServiceName) {
+      return;
+    }
+    try {
+      const account = accounts.find((item) => item.id === accountId);
+      if (!account) {
+        return;
+      }
+      await updateAccountLabels(
+        accountId,
+        account.labels,
+        account.serviceNotes,
+        {
+          ...(account.serviceStatuses ?? {}),
+          [selectedServiceName]: "unavailable" satisfies ServiceReceptionStatus,
+        },
+      );
+      message.success(`已标记 ${selectedServiceName} 收不到验证码`);
+    } catch {
+      message.error("标记失败，请稍后重试");
+    }
+  };
+
+  const handleRestoreServiceAvailability = async (accountId: string) => {
+    if (!selectedServiceName) {
+      return;
+    }
+    try {
+      const account = accounts.find((item) => item.id === accountId);
+      if (!account) {
+        return;
+      }
+      const nextStatuses = { ...(account.serviceStatuses ?? {}) };
+      delete nextStatuses[selectedServiceName];
+      await updateAccountLabels(
+        accountId,
+        account.labels,
+        account.serviceNotes,
+        nextStatuses,
+      );
+      message.success(`已恢复 ${selectedServiceName} 的候选资格`);
+    } catch {
+      message.error("恢复失败，请稍后重试");
+    }
+  };
+
+  const renderServiceStatusActions = (account: MailAccount) => {
+    if (!selectedServiceName) {
+      return null;
+    }
+    if (accountHasServiceIssue(account, selectedServiceName)) {
+      return (
+        <Button
+          icon={<CheckOutlined />}
+          type="link"
+          onClick={() => void handleRestoreServiceAvailability(account.id)}
+        >
+          恢复可注册
+        </Button>
+      );
+    }
+    return (
+      <Space size={4} wrap>
+        {accountViewMode === "available" ? (
+          <Button
+            icon={<CheckOutlined />}
+            type="link"
+            onClick={() => void handleMarkService(account.id)}
+          >
+            标记已注册
+          </Button>
+        ) : null}
+        <Button
+          danger
+          type="link"
+          onClick={() => void handleMarkServiceUnavailable(account.id)}
+        >
+          收不到验证码
+        </Button>
+      </Space>
+    );
+  };
 
   const handleAddAccount = async () => {
     const result = await bindAccount(provider);
@@ -88,8 +274,8 @@ export default function AccountManagementPage() {
     <section className="page-grid">
       <div className="page-header-row">
         <div>
-          <h2>账户管理</h2>
-          <p>集中检查连接状态、同步时间和需要处理的账户。</p>
+          <h2>服务邮箱配置</h2>
+          <p>给邮箱标记可接收的验证码服务，并记录对应服务账号备注。</p>
         </div>
         <div className="page-actions">
           <Button
@@ -97,19 +283,25 @@ export default function AccountManagementPage() {
             type="primary"
             onClick={() => setIsModalOpen(true)}
           >
-            添加账户
+            添加邮箱
           </Button>
         </div>
       </div>
 
-      <div className="account-overview" aria-label="账户连接概览">
+      <div className="account-overview" aria-label="服务绑定概览">
         <div>
-          <span>全部账户</span>
-          <strong>{accounts.length}</strong>
+          <span>服务数</span>
+          <strong>{serviceDirectory.length}</strong>
         </div>
         <div>
-          <span>账号可用</span>
-          <strong className="success-text">{connectedCount}</strong>
+          <span>已配置邮箱</span>
+          <strong className="success-text">{taggedCount}</strong>
+        </div>
+        <div>
+          <span>收码异常</span>
+          <strong className={serviceIssueCount ? "warning-text" : ""}>
+            {serviceIssueCount}
+          </strong>
         </div>
         <div>
           <span>需要处理</span>
@@ -119,46 +311,153 @@ export default function AccountManagementPage() {
         </div>
       </div>
 
+      <section className="surface-card service-directory-panel">
+        <div className="table-toolbar service-directory-heading">
+          <div>
+            <h3>服务目录</h3>
+            <p>先选服务，再维护这个服务可使用的邮箱和账号备注。</p>
+          </div>
+          <div className="service-directory-actions">
+            <div className="service-registration-tool">
+              <span>注册新账号</span>
+              <Input.Search
+                allowClear
+                aria-label="输入注册服务名称"
+                enterButton="找未使用邮箱"
+                placeholder="输入服务名称，如 OpenAI"
+                value={registrationServiceName}
+                onChange={(event) =>
+                  setRegistrationServiceName(event.target.value)
+                }
+                onSearch={(value) => selectService(value, "available")}
+              />
+            </div>
+            <Button
+              type={labelFilter.length ? "default" : "primary"}
+              onClick={() => selectService("", "bound")}
+            >
+              全部邮箱
+            </Button>
+          </div>
+        </div>
+        {serviceDirectory.length ? (
+          <div className="service-card-grid">
+            {serviceDirectory.map((service) => {
+              const isActive = selectedServiceName === service.name;
+              return (
+                <button
+                  aria-pressed={isActive}
+                  className={`service-card ${isActive ? "active" : ""}`}
+                  key={service.name}
+                  type="button"
+                  onClick={() =>
+                    selectService(isActive ? "" : service.name, "bound")
+                  }
+                >
+                  <span>{service.name}</span>
+                  <strong>{service.accountCount}</strong>
+                  <small>
+                    {service.availableCount} 个可注册 · {service.connectedCount}{" "}
+                    个已绑定可用
+                  </small>
+                  {service.blockedCount ? (
+                    <small className="service-card-warning">
+                      {service.blockedCount} 个收不到验证码
+                    </small>
+                  ) : null}
+                </button>
+              );
+            })}
+          </div>
+        ) : (
+          <Empty
+            className="service-directory-empty"
+            description="还没有服务绑定。先给邮箱添加服务名称，例如 OpenAI、GitHub、Stripe。"
+          />
+        )}
+      </section>
+
       <section
         className="surface-card account-table-shell"
         aria-labelledby="account-table-title"
       >
         <div className="table-toolbar">
           <div>
-            <h3 id="account-table-title">已连接账户</h3>
-            <p>共 {filteredAccounts.length} 个匹配结果</p>
+            <h3 id="account-table-title">
+              {selectedServiceName
+                ? `${selectedServiceName} ${
+                    accountViewMode === "available"
+                      ? "可注册邮箱"
+                      : accountViewMode === "blocked"
+                        ? "收不到验证码的邮箱"
+                        : "已绑定邮箱"
+                  }`
+                : "服务可用邮箱"}
+            </h3>
+            <p>
+              {accountViewMode === "available" && selectedServiceName
+                ? `共 ${filteredAccounts.length} 个可注册邮箱，注册完成后可一键标记`
+                : accountViewMode === "blocked" && selectedServiceName
+                  ? `共 ${filteredAccounts.length} 个收不到验证码的邮箱，可恢复候选资格`
+                  : `共 ${filteredAccounts.length} 个匹配结果，可直接维护服务绑定和账号备注`}
+            </p>
           </div>
           <div className="table-filters">
+            {selectedServiceName ? (
+              <Segmented
+                aria-label="切换服务邮箱视图"
+                value={accountViewMode}
+                options={[
+                  { label: "可注册新号", value: "available" },
+                  { label: "已绑定", value: "bound" },
+                  { label: "收不到验证码", value: "blocked" },
+                ]}
+                onChange={(value) =>
+                  selectService(
+                    selectedServiceName,
+                    value as "bound" | "available" | "blocked",
+                  )
+                }
+              />
+            ) : null}
             <Input
               allowClear
-              aria-label="搜索账户"
+              aria-label="搜索邮箱、服务或备注"
               prefix={<SearchOutlined />}
-              placeholder="搜索邮箱或名称"
+              placeholder="搜索邮箱、服务或备注"
               value={query}
               onChange={(event) => setQuery(event.target.value)}
             />
             <Select
               allowClear
-              aria-label="按标签筛选账号"
+              aria-label="按服务筛选邮箱"
               maxTagCount="responsive"
               mode="multiple"
               options={reusableLabels.map((label) => ({ label, value: label }))}
-              placeholder="按标签筛选"
+              placeholder="高级服务筛选"
               suffixIcon={<TagOutlined />}
               value={labelFilter}
-              onChange={setLabelFilter}
+              onChange={(labels) => {
+                setLabelFilter(labels);
+                setRegistrationServiceName(labels[0] ?? "");
+                setAccountViewMode("bound");
+                if (!labels.length) {
+                  setStatusFilter("all");
+                }
+              }}
             />
             <Segmented
               aria-label="按连接状态筛选"
               value={statusFilter}
               options={[
                 { label: "全部", value: "all" },
-                { label: "正常", value: "connected" },
+                { label: "可用", value: "connected" },
                 { label: "需关注", value: "attention" },
               ]}
               onChange={(value) =>
                 setStatusFilter(value as typeof statusFilter)
               }
+              disabled={accountViewMode === "available"}
             />
           </div>
         </div>
@@ -168,10 +467,23 @@ export default function AccountManagementPage() {
           pagination={{
             pageSize: 12,
             showSizeChanger: false,
-            showTotal: (total) => `共 ${total} 个账户`,
+            showTotal: (total) => `共 ${total} 个邮箱`,
           }}
           scroll={{ x: "max-content" }}
           dataSource={filteredAccounts}
+          locale={{
+            emptyText: (
+              <Empty
+                description={
+                  accountViewMode === "blocked" && selectedServiceName
+                    ? "还没有标记为收不到验证码的邮箱"
+                    : accountViewMode === "available" && selectedServiceName
+                      ? "没有可注册邮箱，请更换服务或恢复异常邮箱"
+                      : "没有匹配的邮箱"
+                }
+              />
+            ),
+          }}
           columns={[
             {
               title: "邮箱",
@@ -179,9 +491,20 @@ export default function AccountManagementPage() {
               width: 270,
               render: (email, account) => (
                 <div className="account-identity">
-                  <Typography.Text strong ellipsis={{ tooltip: email }}>
-                    {email}
-                  </Typography.Text>
+                  <div className="account-email-row">
+                    <Typography.Text strong ellipsis={{ tooltip: email }}>
+                      {email}
+                    </Typography.Text>
+                    <Tooltip title="复制邮箱">
+                      <Button
+                        aria-label={`复制 ${email}`}
+                        className="copy-email-button"
+                        icon={<CopyOutlined />}
+                        type="text"
+                        onClick={() => void handleCopyEmail(email)}
+                      />
+                    </Tooltip>
+                  </div>
                   <span>{account.displayName}</span>
                   <div className="account-mobile-details">
                     <Tag
@@ -196,10 +519,16 @@ export default function AccountManagementPage() {
                       accountEmail={account.email}
                       availableLabels={reusableLabels}
                       labels={account.labels}
-                      onChange={(labels) =>
-                        updateAccountLabels(account.id, labels)
+                      serviceNotes={account.serviceNotes}
+                      onChange={(labels, serviceNotes) =>
+                        updateAccountLabels(account.id, labels, serviceNotes)
                       }
                     />
+                    {selectedServiceName ? (
+                      <div className="account-mobile-service-status">
+                        {renderServiceStatusActions(account)}
+                      </div>
+                    ) : null}
                   </div>
                 </div>
               ),
@@ -239,16 +568,19 @@ export default function AccountManagementPage() {
               ),
             },
             {
-              title: "标签",
+              title: "服务标签与备注",
               responsive: ["md"],
-              width: 280,
+              width: 420,
               render: (_, account) => (
                 <AccountLabelEditor
                   compact
                   accountEmail={account.email}
                   availableLabels={reusableLabels}
                   labels={account.labels}
-                  onChange={(labels) => updateAccountLabels(account.id, labels)}
+                  serviceNotes={account.serviceNotes}
+                  onChange={(labels, serviceNotes) =>
+                    updateAccountLabels(account.id, labels, serviceNotes)
+                  }
                 />
               ),
             },
@@ -277,6 +609,20 @@ export default function AccountManagementPage() {
                 </Popconfirm>
               ),
             },
+            ...(selectedServiceName
+              ? [
+                  {
+                    title: "服务状态",
+                    fixed: "right" as const,
+                    responsive: ["md"] as Array<
+                      "xs" | "sm" | "md" | "lg" | "xl" | "xxl"
+                    >,
+                    width: 190,
+                    render: (_: unknown, account: (typeof accounts)[number]) =>
+                      renderServiceStatusActions(account),
+                  },
+                ]
+              : []),
           ]}
         />
       </section>

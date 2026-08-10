@@ -42,6 +42,10 @@ const updateAccountSchema = z.object({
 
 const accountLabelsSchema = z.object({
   labels: z.array(z.string().trim().min(1).max(24)).max(12),
+  serviceNotes: z.record(z.string(), z.string().trim().max(160)).default({}),
+  serviceStatuses: z
+    .record(z.string().trim().min(1).max(24), z.enum(["unavailable"]))
+    .optional(),
 });
 
 const oauthUrlSchema = z.object({
@@ -144,7 +148,12 @@ export const accountsRoutes: FastifyPluginAsync = async (fastify) => {
         .object({ accountId: z.string().min(1) })
         .parse(request.params);
       const body = accountLabelsSchema.parse(request.body);
-      return accountsService.updateAccountLabels(params.accountId, body.labels);
+      return accountsService.updateAccountLabels(
+        params.accountId,
+        body.labels,
+        body.serviceNotes,
+        body.serviceStatuses,
+      );
     },
   );
 

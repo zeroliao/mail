@@ -1,5 +1,6 @@
 export type ProviderKind = "gmail" | "microsoft";
 export type AccountStatus = "connected" | "syncing" | "attention";
+export type ServiceReceptionStatus = "unavailable";
 export type FolderKey = "inbox" | "starred" | "sent" | "drafts" | "archive";
 
 export type HealthResponse = {
@@ -28,6 +29,8 @@ export type MailAccount = {
   unreadCount: number;
   lastSyncAt: string;
   labels: string[];
+  serviceNotes?: Record<string, string>;
+  serviceStatuses?: Record<string, ServiceReceptionStatus>;
   scopeText?: string;
 };
 
