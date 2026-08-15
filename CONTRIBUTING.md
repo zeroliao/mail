@@ -18,6 +18,7 @@
 - `v<version>`: archive tag created only after production succeeds
 
 Versions use a monotonically increasing three-digit sequence such as `001` and `002`. The authoritative branch, image and deployment gates are documented in `docs/version-management.md`.
+GitHub uses `main` as the default branch. The former `develop` branch is historical and must not be used as the base for new versions.
 
 ## Delivery Flow
 

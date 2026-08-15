@@ -1,6 +1,6 @@
 # 当前开发状态
 
-更新时间：2026-08-15
+更新时间：2026-08-16
 
 本文是新会话的动态交接入口。稳定规则以 `../AGENTS.md` 为准，用户行为以 `usage-guide.md` 为准，测试要求以 `testing.md` 为准。
 
@@ -29,21 +29,29 @@ MailOps 的活动运行链路是 `frontend/ + mail-backend/`：
 
 ## 当前工作区上下文
 
-当前 `dev/001` 以原 `develop@ec4560b` 为起点，首版同时建立版本记录、候选镜像和生产部署门禁。工作区中的 SQLite 运行数据和浏览器临时产物不属于版本内容，不应提交。
+版本 `001` 已成功部署到 `https://mail.zero007.chat`，生产归档为 `v001`，最终记录 commit 为 `4d041672678bf2fc3edb6ae0e146481b39f5f147`；实际镜像、备份和回滚信息以 `releases/001.md` 为准。
+
+当前开发分支是从生产 `main` 创建的 `dev/002`。本版本用于加固发布与部署门禁：CI 启动 backend production image、统一 exact-digest 隔离验证、补全首次 SQLite 导入和反向代理流程。GitHub default branch 已从历史 `develop` 调整为 `main`；`develop` 不再作为新版本起点。
+
+工作区中的 SQLite 运行数据和浏览器临时产物不属于版本内容，不应提交。
 
 开始新任务前必须先运行 `git status --short` 和 `git diff --stat`，再阅读待改文件的现有 diff；不得因 Git 历史较旧而回滚用户改动。
 
 ## 最近验证基线
 
-2026-08-15 在当前 `dev/001` 工作区运行 `npm run validate` 已通过：
+版本 `001` 在 2026-08-15 完成以下验证并成功进入生产：
 
 - 后端 typecheck 和前端 lint 通过。
 - 后端 19/19 tests 通过。
 - 前端 11/11 tests 通过，共 4 个 test files。
 - 前后端 production build 通过。
 - GitHub Actions YAML 结构解析通过；生产 Compose `config --quiet` 通过。
+- 目标服务器 exact-digest 隔离验证、生产 health、管理员登录、数据聚合校验和 SQLite `integrity_check` 通过。
+- backend/frontend 实际内存约为 130 MiB/5 MiB，部署后服务器 available memory 约 1.5 GiB。
 
 上一轮还真实验证过页面停止、端口关闭、桌面快捷方式重启和启动窗口退出。任何新功能完成后仍需重新运行与改动范围匹配的检查；本基线不能替代后续验证。
+
+2026-08-16 在 `dev/002` 对发布门禁改动完成本地检查：backend typecheck、frontend lint、backend 19/19 tests、frontend 11/11 tests、双端 production build、smoke shell syntax 和 local/production Compose config 均通过。Vite 仍报告约 1.26 MB 主 bundle warning。本机 Docker daemon 未运行，新增的 backend production image runtime smoke 需要由 GitHub CI 实际执行后才能视为验证完成。
 
 ## 已知边界与风险
 
@@ -52,6 +60,7 @@ MailOps 的活动运行链路是 `frontend/ + mail-backend/`：
 - 生产部署使用 SQLite 备份后的短暂停机升级；当前架构不使用共享 SQLite 的双 backend 蓝绿发布。
 - 生产 Compose 默认限制 frontend 为 128 MiB、backend 为 768 MiB；服务器不执行候选镜像构建。
 - OAuth、refresh token 和发信依赖外部 provider，自动化测试使用 mock，不能替代真实账号冒烟。
+- 当前生产 Gmail OAuth 已配置，Microsoft global OAuth 未配置；迁移的 per-account Microsoft 数据仍保留，但新增全局 Microsoft OAuth 授权依赖后续生产配置。
 - Microsoft Token 批量导入是逐条串行处理，单条失败不影响后续；前端按每批 100 条提交，结果保留逐条明细，并可下载失败记录 JSON。
 - UI 批量粘贴接受 JSON 数组、JSON Lines，或以逗号、Tab、`|` 分隔的 `email, refreshToken, clientId, displayName, scope`；单次最多 1000 条。外部表格若为其他列序或 `----` 分隔，需先转换，不能直接粘贴。
 - 页面停止服务只支持通过 Windows 本机启动器运行的场景；容器和远程部署应使用各自的进程管理方式。

@@ -16,7 +16,7 @@ npm run validate
 - 前端 Vitest tests
 - 前后端 production build
 
-CI 在 Node.js 22 上对 `dev/*`、`release/*`、`main` 和 pull request 执行相同的 component checks，并额外构建本地 Docker images。修改单一组件时可以先运行对应命令，提交或交接跨模块改动前运行完整门禁。
+CI 在 Node.js 22 上对 `dev/*`、`release/*`、`main` 和 pull request 执行相同的 component checks，并额外构建本地 Docker images。backend production image 构建后会通过 `deploy/scripts/smoke-backend-image.sh` 真实执行 Prisma migration、health 检查和 Prisma/OpenSSL runtime 日志扫描。修改单一组件时可以先运行对应命令，提交或交接跨模块改动前运行完整门禁。
 
 ## 当前自动化覆盖
 
@@ -61,13 +61,14 @@ CI 在 Node.js 22 上对 `dev/*`、`release/*`、`main` 和 pull request 执行�
 `release/<version>` 的候选验证除 `npm run validate` 外，还必须覆盖：
 
 - `GHCR Images` workflow 从同一个 release source commit 生成 backend/frontend digest。
+- 同一 release commit 的 `CI` workflow 通过 backend production image runtime smoke。
 - `deploy/images.env` 使用两个非占位的 `@sha256:` 引用。
 - `docker compose --env-file deploy/images.env -f deploy/docker-compose.yml config` 通过。
-- 本地拉取 exact digest 后，backend `/api/v1/health` 和 frontend `/nginx-health` 通过。
+- 在目标服务器隔离环境或本地 Docker 中拉取 exact digest，backend `/api/v1/health` 和 frontend `/nginx-health` 通过；两种位置至少完成一种，优先使用目标服务器隔离环境。
 - backend 启动 migration 完成，最近日志无 fatal、Prisma 或配置错误。
 - source commit、compose commit、两个 digest 和验证结果已写入 `releases/<version>.md`。
 
-本地候选通过后才能把版本状态改为“已提测”。生产部署前还必须记录服务器资源检查、SQLite 备份和回滚目标；完整节点顺序以 `version-management.md` 为准。
+exact-digest 隔离验证通过后才能把版本状态改为“已提测”。生产部署前还必须记录服务器资源检查、SQLite 备份和回滚目标；完整节点顺序以 `version-management.md` 为准。
 
 ## 发布记录原则
 

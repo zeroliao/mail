@@ -94,7 +94,7 @@ Run the complete local gate from the repository root:
 npm run validate
 ```
 
-This runs backend type checking and tests, frontend lint and tests, then both production builds. CI performs the same component-level checks and builds the Docker images.
+This runs backend type checking and tests, frontend lint and tests, then both production builds. CI performs the same component-level checks, builds the Docker images, and starts the backend production image through `deploy/scripts/smoke-backend-image.sh` to verify migration, health and Prisma/OpenSSL runtime compatibility.
 
 ## Production Constraints
 
@@ -104,6 +104,7 @@ This runs backend type checking and tests, frontend lint and tests, then both pr
 - Production keeps one backend/SQLite writer. Back up SQLite before every upgrade; do not use a blue/green dual-backend rollout with the current database model.
 - The production Compose limits the frontend to 128 MiB and the backend to 768 MiB. Review host available memory before changing those limits.
 - Production images must use `@sha256:` references produced from `release/<version>`; mutable tags are not deployment inputs.
+- Migrated SQLite data containing encrypted provider tokens is usable only with the matching `TOKEN_ENCRYPTION_KEY`. Preserve the key across host migration without printing it or writing it into repository files.
 - Terminate TLS at Nginx, a load balancer, or an ingress controller.
 - Keep `.env`, database files, and backups outside version control.
 - The UI shutdown endpoint is intentionally local-only. Use Docker Compose, a service manager, or the deployment platform to stop non-local instances.
