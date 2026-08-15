@@ -31,7 +31,7 @@ MailOps 的活动运行链路是 `frontend/ + mail-backend/`：
 
 版本 `001` 已成功部署到 `https://mail.zero007.chat`，生产归档为 `v001`，最终记录 commit 为 `4d041672678bf2fc3edb6ae0e146481b39f5f147`；实际镜像、备份和回滚信息以 `releases/001.md` 为准。
 
-当前开发分支是从生产 `main` 创建的 `dev/002`。本版本用于加固发布与部署门禁：CI 启动 backend production image、统一 exact-digest 隔离验证、补全首次 SQLite 导入和反向代理流程。GitHub default branch 已从历史 `develop` 调整为 `main`；`develop` 不再作为新版本起点。
+当前开发分支是从生产 `main` 创建的 `dev/002`。本版本用于加固发布与部署门禁：本地和 CI 共用 runtime gate、CI 仅在 runtime 输入变化时启动 backend production image、统一 exact-digest 隔离验证、补全首次 SQLite 导入和反向代理流程。GitHub default branch 已从历史 `develop` 调整为 `main`；`develop` 不再作为新版本起点。
 
 工作区中的 SQLite 运行数据和浏览器临时产物不属于版本内容，不应提交。
 
@@ -51,7 +51,7 @@ MailOps 的活动运行链路是 `frontend/ + mail-backend/`：
 
 上一轮还真实验证过页面停止、端口关闭、桌面快捷方式重启和启动窗口退出。任何新功能完成后仍需重新运行与改动范围匹配的检查；本基线不能替代后续验证。
 
-2026-08-16 在 `dev/002` 对发布门禁改动完成本地检查：backend typecheck、frontend lint、backend 19/19 tests、frontend 11/11 tests、双端 production build、smoke shell syntax 和 local/production Compose config 均通过。Vite 仍报告约 1.26 MB 主 bundle warning。本机 Docker daemon 未运行；GitHub CI run `31896969466` 已在 Linux runner 成功完成 Docker build 和 backend production image runtime smoke，Prisma generate 无 OpenSSL detection warning。
+2026-08-16 在 `dev/002` 对发布门禁改动完成本地检查：backend typecheck、frontend lint、backend 19/19 tests、frontend 11/11 tests、双端 production build、smoke shell syntax 和 local/production Compose config 均通过。Vite 仍报告约 1.26 MB 主 bundle warning。本机 Docker daemon 未运行；GitHub CI run `31896969466` 已在 Linux runner 成功完成 Docker build 和 backend production image runtime smoke，Prisma generate 无 OpenSSL detection warning。后续 runtime 输入变更统一运行 `deploy/scripts/validate-runtime-gate.sh`，首次 push 前必须在 Docker-capable 环境完成；纯文档提交复用最近成功 gate，CI 不重复构建镜像。
 
 ## 已知边界与风险
 

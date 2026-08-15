@@ -16,7 +16,15 @@ npm run validate
 - 前端 Vitest tests
 - 前后端 production build
 
-CI 在 Node.js 22 上对 `dev/*`、`release/*`、`main` 和 pull request 执行相同的 component checks，并额外构建本地 Docker images。backend production image 构建后会通过 `deploy/scripts/smoke-backend-image.sh` 真实执行 Prisma migration、health 检查和 Prisma/OpenSSL runtime 日志扫描。修改单一组件时可以先运行对应命令，提交或交接跨模块改动前运行完整门禁。
+CI 在 Node.js 22 上对 `dev/*`、`release/*`、`main` 和 pull request 执行相同的 component checks。`frontend/`、`mail-backend/`、根 Compose、CI workflow 或 runtime gate 脚本变化时，CI 还会调用 `deploy/scripts/validate-runtime-gate.sh` 构建本地 Docker images，并真实执行 Prisma migration、health 检查和 Prisma/OpenSSL runtime 日志扫描；纯文档提交明确跳过该 Docker gate。修改单一组件时可以先运行对应命令，提交或交接跨模块改动前运行完整门禁。
+
+修改 Docker、Compose 或 CI runtime 输入时，首次 push 前必须在 Docker-capable 环境运行：
+
+```bash
+bash deploy/scripts/validate-runtime-gate.sh
+```
+
+本机 Docker 不可用时，使用一次性隔离 Docker 环境或目标服务器隔离环境完成同一 gate。不要依赖 GitHub CI 逐次试错；push 后只跟踪当前 HEAD 的一个 run，失败时只读取对应失败 step 的日志。外部状态未变化时不重复验证，纯文档后续提交复用最近成功的 runtime gate。
 
 ## 当前自动化覆盖
 
@@ -72,4 +80,4 @@ exact-digest 隔离验证通过后才能把版本状态改为“已提测”。�
 
 ## 发布记录原则
 
-不要新增一次性的 `verification_report` 或按功能复制完整测试计划。最终回复记录本次实际执行结果；仍具有长期价值的覆盖边界更新到本文，动态实现风险更新到 `current-state.md`。
+不要新增一次性的 `verification_report` 或按功能复制完整测试计划。开发阶段失败尝试不逐轮扩写版本记录；在门禁稳定后汇总根因、最终修复和最终 workflow run。最终回复记录本次实际执行结果；仍具有长期价值的覆盖边界更新到本文，动态实现风险更新到 `current-state.md`。

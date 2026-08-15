@@ -23,6 +23,54 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Detect runtime input changes
+        id: runtime-inputs
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PUSH_BEFORE: ${{ github.event.before }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+
+          if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
+            echo "should_run=true" >> "$GITHUB_OUTPUT"
+            echo "Runtime gate requested explicitly."
+            exit 0
+          fi
+
+          if [[ "$EVENT_NAME" == "pull_request" ]]; then
+            base_sha="$PR_BASE_SHA"
+          else
+            base_sha="$PUSH_BEFORE"
+          fi
+
+          zero_sha="0000000000000000000000000000000000000000"
+          if [[ -z "$base_sha" || "$base_sha" == "$zero_sha" ]]; then
+            echo "should_run=true" >> "$GITHUB_OUTPUT"
+            echo "No comparable base commit; Docker runtime gate will run."
+            exit 0
+          fi
+
+          if ! git cat-file -e "${base_sha}^{commit}" 2>/dev/null; then
+            echo "should_run=true" >> "$GITHUB_OUTPUT"
+            echo "Base commit is unavailable; Docker runtime gate will run."
+            exit 0
+          fi
+
+          changed_files="$(git diff --name-only "$base_sha" "$GITHUB_SHA")"
+
+          printf '%s\n' "$changed_files"
+          if printf '%s\n' "$changed_files" | grep -Eq '^(frontend/|mail-backend/|docker-compose\.yml$|\.github/workflows/ci\.yml$|deploy/scripts/(smoke-backend-image|validate-runtime-gate)\.sh$)'; then
+            echo "should_run=true" >> "$GITHUB_OUTPUT"
+            echo "Runtime inputs changed; Docker runtime gate will run."
+          else
+            echo "should_run=false" >> "$GITHUB_OUTPUT"
+            echo "No runtime inputs changed; Docker runtime gate will be skipped."
+          fi
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -65,9 +113,14 @@ jobs:
         working-directory: mail-backend
         run: npm run build
 
-      - name: Build Docker images
-        run: docker compose build
-
-      - name: Smoke test backend production image
+      - name: Validate Docker runtime gate
+        if: steps.runtime-inputs.outputs.should_run == 'true'
         shell: bash
-        run: bash deploy/scripts/smoke-backend-image.sh mailops-backend:local
+        run: bash deploy/scripts/validate-runtime-gate.sh
+
+      - name: Summarize skipped Docker runtime gate
+        if: steps.runtime-inputs.outputs.should_run != 'true'
+        shell: bash
+        run: |
+          echo "### Docker runtime gate" >> "$GITHUB_STEP_SUMMARY"
+          echo "Skipped because this change does not modify runtime inputs." >> "$GITHUB_STEP_SUMMARY"

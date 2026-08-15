@@ -37,6 +37,7 @@ GitHub default branch 必须为 `main`。历史 `develop` 只作为 `001` 的迁
    - 功能、测试、migration、文档和部署配置均进入 `dev/<version>`。
    - 同一批改动只保留一条提交链，不在 dev、release 和 main 上分别重做提交。
    - 完成与改动范围匹配的检查；跨模块或发布流程变更运行 `npm run validate`。
+   - Docker、Compose、CI runtime 输入变化时，首次 push 前必须在 Docker-capable 环境运行 `bash deploy/scripts/validate-runtime-gate.sh`。本机 Docker 不可用时，改用一次性隔离 Docker 环境或目标服务器隔离环境，不把 GitHub CI 当作交互式调试器。
 3. 提测：
    - 将 `dev/<version>` fast-forward 到 `release/<version>`。
    - 推送 release 分支后，等待 `CI` 和 `GHCR Images` workflow 均成功；CI 必须真实启动 backend production image，并验证 migration、health 和 Prisma/OpenSSL runtime 日志。
@@ -103,10 +104,12 @@ GitHub default branch 必须为 `main`。历史 `develop` 只作为 `001` 的迁
 ## 执行边界
 
 - 已记录且外部状态未变化的节点不重复执行；只重新读取足以证明状态变化的最小信号。
+- push 后只跟踪当前 HEAD 对应的一个 workflow run；失败后读取该 run 的失败 job/step 日志并针对根因修改，不并行追踪或反复查询多个 run。
 - workflow、SSH 或权限操作失败时，先定位失败原因。相同命令最多重试一次；仍失败则记录阻塞，不通过替代写操作绕过权限边界。
 - 数据迁移临时目录必须使用明确、受限的路径，并在成功或失败退出时清理。生产备份不属于临时目录，禁止随普通清理删除。
 - `Promote Verified Images`、mutable image tag 和开发分支归档是可选后续动作，不得被误认为生产 health、数据完整性或版本归档的阻塞门禁。
-- 每个发布节点完成后立即更新版本记录；候选镜像 run、最终记录 CI run 和 Release Archive run 分开记录，避免混淆构件来源。
+- 版本记录在节点达到稳定结果后汇总根因、最终修复和最终 run；开发阶段失败尝试不逐轮追加完整发布记录。候选镜像 run、最终记录 CI run 和 Release Archive run 分开记录，避免混淆构件来源。
+- 纯文档提交可以复用当前版本最近一次成功的 runtime gate；CI 对未修改 runtime 输入的提交明确跳过 Docker build/runtime smoke。
 
 ## 紧急修复
 
