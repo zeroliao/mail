@@ -30,11 +30,19 @@
 
 Docker、Compose 或 CI runtime 输入变化时，首次 push 前先在 Docker-capable 环境运行统一门禁：
 
+```powershell
+npm.cmd run validate:runtime
+```
+
+Windows 命令会限时检查 Docker daemon，按需启动本机 Docker Desktop，并通过 Git Bash 调用下方同一个 gate。启动失败时只清理本轮新增且启动时间匹配的 Docker 进程；已有或成功启动的 Docker Desktop 保持运行。
+
+Linux、macOS 或已管理 Docker daemon 的环境使用：
+
 ```bash
 bash deploy/scripts/validate-runtime-gate.sh
 ```
 
-该脚本先检查 Docker daemon，再构建本地镜像并启动 backend production image smoke。本机 Docker 不可用时，应在一次性隔离 Docker 环境或目标服务器隔离环境执行，不使用 GitHub CI 进行交互式试错。纯文档提交可以复用最近成功结果，CI 会明确跳过 Docker runtime gate。
+该脚本先检查 Docker daemon，再构建本地镜像并启动 backend production image smoke。本机 Docker 不可用时，应在一次性隔离 Docker 环境执行；不要在生产服务器覆盖 `mailops-*:local` image tag，也不使用 GitHub CI 进行交互式试错。纯文档提交可以复用最近成功结果，CI 会明确跳过 Docker runtime gate。
 
 在仓库根目录执行：
 

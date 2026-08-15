@@ -64,13 +64,36 @@ jobs:
           changed_files="$(git diff --name-only "$base_sha" "$GITHUB_SHA")"
 
           printf '%s\n' "$changed_files"
-          if printf '%s\n' "$changed_files" | grep -Eq '^(frontend/|mail-backend/|docker-compose\.yml$|\.github/workflows/ci\.yml$|deploy/scripts/(smoke-backend-image|validate-runtime-gate)\.sh$)'; then
+          if printf '%s\n' "$changed_files" | grep -Eq '^(frontend/|mail-backend/|docker-compose\.yml$|start\.ps1$|\.github/workflows/ci\.yml$|deploy/scripts/(smoke-backend-image\.sh|validate-runtime-gate\.(sh|ps1)|ensure-docker-desktop\.ps1)$)'; then
             echo "should_run=true" >> "$GITHUB_OUTPUT"
             echo "Runtime inputs changed; Docker runtime gate will run."
           else
             echo "should_run=false" >> "$GITHUB_OUTPUT"
             echo "No runtime inputs changed; Docker runtime gate will be skipped."
           fi
+
+      - name: Validate PowerShell script syntax
+        shell: pwsh
+        run: |
+          $files = @(
+            Get-ChildItem -LiteralPath . -Filter *.ps1 -File
+            Get-ChildItem -LiteralPath deploy/scripts -Filter *.ps1 -File
+          )
+          foreach ($file in $files) {
+            $tokens = $null
+            $errors = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile(
+              $file.FullName,
+              [ref]$tokens,
+              [ref]$errors
+            )
+            if (@($errors).Count -gt 0) {
+              foreach ($parseError in @($errors)) {
+                Write-Error ("{0}: {1}" -f $file.FullName, $parseError.Message)
+              }
+              exit 1
+            }
+          }
 
       - name: Setup Node.js
         uses: actions/setup-node@v4

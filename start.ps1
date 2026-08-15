@@ -120,42 +120,11 @@ if ($Mode -eq "docker") {
     }
     Write-Ok "Docker installed"
 
-    # Check Docker daemon
+    # Check Docker daemon through the same bounded startup helper used by the runtime gate.
     Write-Step "Checking Docker daemon"
-    docker info 2>$null | Out-Null
-    if ($LASTEXITCODE -ne 0) {
-        Write-Warn "Docker daemon not running. Starting Docker Desktop..."
-
-        $searchPaths = @(
-            (Join-Path $env:ProgramFiles "Docker\Docker\Docker Desktop.exe"),
-            (Join-Path $env:LOCALAPPDATA "Docker\Docker Desktop.exe")
-        )
-        $dockerDesktopPath = $searchPaths | Where-Object { Test-Path $_ } | Select-Object -First 1
-
-        if ($dockerDesktopPath) {
-            Start-Process $dockerDesktopPath
-            Write-Warn "Waiting for Docker (max 120s)..."
-            $timeout = 120; $elapsed = 0
-            while ($elapsed -lt $timeout) {
-                Start-Sleep -Seconds 3; $elapsed += 3
-                docker info 2>$null | Out-Null
-                if ($LASTEXITCODE -eq 0) {
-                    Write-Ok ("Docker ready (took " + $elapsed + "s)")
-                    break
-                }
-                Write-Host "." -NoNewline
-            }
-            if ($elapsed -ge $timeout) {
-                Write-Err "Docker startup timed out. Please start manually."
-                exit 1
-            }
-        } else {
-            Write-Err "Cannot find Docker Desktop. Please start Docker manually."
-            exit 1
-        }
-    } else {
-        Write-Ok "Docker daemon running"
-    }
+    $ensureDockerScript = Join-Path $ProjectRoot "deploy\scripts\ensure-docker-desktop.ps1"
+    & $ensureDockerScript -StartupTimeoutSeconds 120 -StopStartedProcessesOnFailure
+    Write-Ok "Docker daemon running"
 
     # Docker Compose up
     Write-Step "Starting Docker Compose"

@@ -16,15 +16,23 @@ npm run validate
 - 前端 Vitest tests
 - 前后端 production build
 
-CI 在 Node.js 22 上对 `dev/*`、`release/*`、`main` 和 pull request 执行相同的 component checks。`frontend/`、`mail-backend/`、根 Compose、CI workflow 或 runtime gate 脚本变化时，CI 还会调用 `deploy/scripts/validate-runtime-gate.sh` 构建本地 Docker images，并真实执行 Prisma migration、health 检查和 Prisma/OpenSSL runtime 日志扫描；纯文档提交明确跳过该 Docker gate。修改单一组件时可以先运行对应命令，提交或交接跨模块改动前运行完整门禁。
+CI 在 Node.js 22 上对 `dev/*`、`release/*`、`main` 和 pull request 执行相同的 component checks，并通过 `pwsh` parser 检查根目录及 `deploy/scripts/` 中的 PowerShell 脚本。`frontend/`、`mail-backend/`、根 Compose、`start.ps1`、CI workflow 或 runtime gate 脚本变化时，CI 还会调用 `deploy/scripts/validate-runtime-gate.sh` 构建本地 Docker images，并真实执行 Prisma migration、health 检查和 Prisma/OpenSSL runtime 日志扫描；纯文档提交明确跳过该 Docker gate。修改单一组件时可以先运行对应命令，提交或交接跨模块改动前运行完整门禁。
 
 修改 Docker、Compose 或 CI runtime 输入时，首次 push 前必须在 Docker-capable 环境运行：
+
+```powershell
+npm.cmd run validate:runtime
+```
+
+Windows 入口会先执行有单次超时的 Docker daemon 探测；daemon 未运行时，定位并启动 Docker Desktop，最多等待 120 秒。启动失败时只停止本轮新增且启动时间匹配的 Docker Desktop 进程；daemon 原本已运行或成功启动时不会自动关闭。它随后通过明确的 Git Bash 路径调用同一个 Bash gate，避免误用 WSL `bash`。
+
+Linux、macOS 或 daemon 已由外部环境管理时直接运行：
 
 ```bash
 bash deploy/scripts/validate-runtime-gate.sh
 ```
 
-本机 Docker 不可用时，使用一次性隔离 Docker 环境或目标服务器隔离环境完成同一 gate。不要依赖 GitHub CI 逐次试错；push 后只跟踪当前 HEAD 的一个 run，失败时只读取对应失败 step 的日志。外部状态未变化时不重复验证，纯文档后续提交复用最近成功的 runtime gate。
+本机 Docker 不可用时，使用一次性隔离 Docker 环境完成同一 gate；不要在生产服务器构建 `mailops-*:local` 镜像。不要依赖 GitHub CI 逐次试错；push 后只跟踪当前 HEAD 的一个 run，失败时只读取对应失败 step 的日志。外部状态未变化时不重复验证，纯文档后续提交复用最近成功的 runtime gate。
 
 ## 当前自动化覆盖
 

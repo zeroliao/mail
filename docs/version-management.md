@@ -37,7 +37,7 @@ GitHub default branch 必须为 `main`。历史 `develop` 只作为 `001` 的迁
    - 功能、测试、migration、文档和部署配置均进入 `dev/<version>`。
    - 同一批改动只保留一条提交链，不在 dev、release 和 main 上分别重做提交。
    - 完成与改动范围匹配的检查；跨模块或发布流程变更运行 `npm run validate`。
-   - Docker、Compose、CI runtime 输入变化时，首次 push 前必须在 Docker-capable 环境运行 `bash deploy/scripts/validate-runtime-gate.sh`。本机 Docker 不可用时，改用一次性隔离 Docker 环境或目标服务器隔离环境，不把 GitHub CI 当作交互式调试器。
+   - Docker、Compose、CI runtime 输入变化时，首次 push 前必须在 Docker-capable 环境运行统一 gate。Windows 本机使用 `npm.cmd run validate:runtime`，该命令会限时探测并按需启动 Docker Desktop；Docker daemon 已就绪的 Linux/macOS 环境使用 `bash deploy/scripts/validate-runtime-gate.sh`。两者执行同一个 build/runtime smoke。当前机器无法提供 Docker 时，改用一次性隔离 Docker 环境，不把 GitHub CI 当作交互式调试器，也不在生产服务器覆盖本地 image tag。
 3. 提测：
    - 将 `dev/<version>` fast-forward 到 `release/<version>`。
    - 推送 release 分支后，等待 `CI` 和 `GHCR Images` workflow 均成功；CI 必须真实启动 backend production image，并验证 migration、health 和 Prisma/OpenSSL runtime 日志。

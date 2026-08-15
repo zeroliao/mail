@@ -9,7 +9,8 @@
     "build": "npm --prefix mail-backend run build && npm --prefix frontend run build",
     "lint": "npm --prefix mail-backend run typecheck && npm --prefix frontend run lint",
     "test": "npm --prefix mail-backend test && npm --prefix frontend test",
-    "validate": "npm run lint && npm test && npm run build"
+    "validate": "npm run lint && npm test && npm run build",
+    "validate:runtime": "powershell -NoProfile -ExecutionPolicy Bypass -File ./deploy/scripts/validate-runtime-gate.ps1"
   },
   "type": "commonjs"
 }

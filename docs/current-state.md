@@ -51,7 +51,7 @@ MailOps 的活动运行链路是 `frontend/ + mail-backend/`：
 
 上一轮还真实验证过页面停止、端口关闭、桌面快捷方式重启和启动窗口退出。任何新功能完成后仍需重新运行与改动范围匹配的检查；本基线不能替代后续验证。
 
-2026-08-16 在 `dev/002` 对发布门禁改动完成本地检查：backend typecheck、frontend lint、backend 19/19 tests、frontend 11/11 tests、双端 production build、两个 runtime shell 脚本语法、CI YAML、路径过滤和 local/production Compose config 均通过。Vite 仍报告约 1.26 MB 主 bundle warning。本机 Docker daemon 未运行；GitHub CI run `31898277277` 已在 Linux runner 通过统一 Docker runtime gate，完成 Docker build 和 backend production image smoke。后续 runtime 输入变更统一运行 `deploy/scripts/validate-runtime-gate.sh`，首次 push 前必须在 Docker-capable 环境完成；纯文档提交复用最近成功 gate，CI 不重复构建镜像。
+2026-08-16 在 `dev/002` 对发布门禁改动完成本地检查：backend typecheck、frontend lint、backend 19/19 tests、frontend 11/11 tests、双端 production build、Bash/PowerShell runtime 脚本语法、CI YAML、package JSON、路径过滤和 local/production Compose config 均通过。GitHub CI run `31898277277` 已在 Linux runner 通过统一 Docker runtime gate；Windows 本机 `npm.cmd run validate:runtime` 也已按需启动 Docker Desktop 并成功完成双镜像 build、两个 migration、数据库/HTTP health 和 Prisma/OpenSSL 日志检查。该 Windows 入口对 daemon 探测和总启动时间设有上限，失败时精确清理本轮新增进程，再通过明确的 Git Bash 路径调用同一个 Bash gate；纯文档提交复用最近成功 gate，CI 不重复构建镜像。
 
 ## 已知边界与风险
 
