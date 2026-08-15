@@ -12,6 +12,13 @@ on:
 jobs:
   lint-build-test:
     runs-on: ubuntu-latest
+    env:
+      NODE_ENV: test
+      DATABASE_URL: file:./prisma/ci.db
+      JWT_SECRET: ci-test-jwt-secret-1234567890
+      TOKEN_ENCRYPTION_KEY: ci-test-token-encryption-key-123456
+      API_ADMIN_USERNAME: admin
+      API_ADMIN_PASSWORD: ci-test-admin-password
 
     steps:
       - name: Checkout

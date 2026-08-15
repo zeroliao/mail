@@ -1,10 +1,32 @@
 import assert from "node:assert/strict";
 import { after, before, test } from "node:test";
-import { copyFile, rm, unlink } from "node:fs/promises";
+import { mkdir, readFile, readdir, rm, unlink } from "node:fs/promises";
 import path from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import type { FastifyInstance } from "fastify";
 
 const mockEmail = "bind-oauth-mock@hotmail.com";
+
+async function createTestDatabase(databasePath: string) {
+  const migrationsDir = path.resolve(process.cwd(), "prisma", "migrations");
+  const migrationDirs = (await readdir(migrationsDir, { withFileTypes: true }))
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name)
+    .sort();
+  const database = new DatabaseSync(databasePath);
+
+  try {
+    for (const migrationDir of migrationDirs) {
+      const sql = await readFile(
+        path.join(migrationsDir, migrationDir, "migration.sql"),
+        "utf8",
+      );
+      database.exec(sql);
+    }
+  } finally {
+    database.close();
+  }
+}
 
 function installMockFetch() {
   (global as any).fetch = async (input: any) => {
@@ -48,12 +70,12 @@ before(async () => {
   installMockFetch();
 
   const dbDir = path.resolve(process.cwd(), "prisma", "prisma");
-  const templateDbPath = path.join(dbDir, "test-bind-oauth.db");
   const dbFileName = `test-bind-oauth-${Date.now()}-${process.pid}.db`;
   testDbPath = path.join(dbDir, dbFileName);
 
-  await copyFile(templateDbPath, testDbPath);
+  await mkdir(dbDir, { recursive: true });
   process.env.DATABASE_URL = `file:./prisma/${dbFileName}`;
+  await createTestDatabase(testDbPath);
 
   const { buildApp } = await import("../src/app");
   app = buildApp({
@@ -83,6 +105,8 @@ after(async () => {
   if (testDbPath) {
     await unlink(testDbPath).catch(() => undefined);
     await rm(`${testDbPath}-journal`, { force: true }).catch(() => undefined);
+    await rm(`${testDbPath}-shm`, { force: true }).catch(() => undefined);
+    await rm(`${testDbPath}-wal`, { force: true }).catch(() => undefined);
   }
 });
 
