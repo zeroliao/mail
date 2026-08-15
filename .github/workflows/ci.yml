@@ -70,10 +70,4 @@ jobs:
 
       - name: Smoke test backend production image
         shell: bash
-        run: |
-          backend_image="$(docker compose images -q backend)"
-          if [[ -z "$backend_image" ]]; then
-            echo "docker compose did not produce a backend image" >&2
-            exit 1
-          fi
-          bash deploy/scripts/smoke-backend-image.sh "$backend_image"
+        run: bash deploy/scripts/smoke-backend-image.sh mailops-backend:local
