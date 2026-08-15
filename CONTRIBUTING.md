@@ -12,20 +12,25 @@
 
 ## Branch Strategy
 
-- `main`: release-ready branch
-- `develop`: integration branch for daily development
-- `feature/*`: feature work branched from and merged into `develop`
+- `main`: only versions that have passed production deployment
+- `dev/<version>`: the single development branch for a numbered version
+- `release/<version>`: the immutable candidate line promoted from the matching dev branch
+- `v<version>`: archive tag created only after production succeeds
 
-Use `feature/<area>-<short-description>`, for example `feature/mailbox-import`.
+Versions use a monotonically increasing three-digit sequence such as `001` and `002`. The authoritative branch, image and deployment gates are documented in `docs/version-management.md`.
 
 ## Delivery Flow
 
-1. Inspect `git status --short` and preserve existing user changes.
-2. Branch from `develop` when a branch is requested.
+1. Calculate the next unused version and create `docs/releases/<version>.md`.
+2. Create `dev/<version>` from the latest production `main`; version `001` is the one-time migration from the former `develop` branch.
 3. Implement and run checks proportional to the change; run `npm run validate` for shared or cross-module behavior.
 4. Update the relevant authority document listed in `docs/README.md`.
 5. Commit only when requested, using Conventional Commits.
-6. Open a pull request into `develop`; merge `develop` into `main` for a release.
+6. Fast-forward the completed dev branch to `release/<version>` and build the two candidate images.
+7. Pin the workflow-produced digests, complete local and server validation, and update the version record.
+8. Only after production succeeds, fast-forward the release branch to `main` and create `v<version>`.
+
+Do not rebuild an image from a Git tag or deploy a mutable image tag. Production uses the exact backend and frontend digests recorded for the release.
 
 ## Commit Messages
 

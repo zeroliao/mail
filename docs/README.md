@@ -12,5 +12,8 @@
 | `../mail-backend/docs/architecture.md` | 后端分层、认证、数据和 provider 边界           | 后端架构或数据契约变化时           |
 | `../DEPLOYMENT.md`                     | 环境、启动、Docker、生产约束                   | 配置或部署方式变化时               |
 | `../CONTRIBUTING.md`                   | 分支、提交和交付约定                           | 团队协作方式变化时                 |
+| `version-management.md`                | 版本编号、分支、镜像、发布门禁和失败处理       | 发布模型或门禁变化时               |
+| `releases/<version>.md`                | 单个版本的 commit、digest、验证和部署记录      | 每个发布节点完成后                 |
+| `../deploy/README.md`                  | 生产候选检查、SQLite 备份、部署和回滚步骤      | 生产运行方式变化时                 |
 
 维护原则：同一事实只保留一个权威来源，其他文档使用链接引用；不记录 secrets、邮箱凭据、实际账号清单、临时端口冲突或一次性测试日志。

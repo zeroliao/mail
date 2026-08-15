@@ -11,6 +11,7 @@ MailOps 的活动运行链路是 `frontend/ + mail-backend/`：
 - 前端使用 React 18、TypeScript strict、Ant Design、Zustand 和 Vite。
 - 后端使用 Fastify、Prisma 和 SQLite，provider 位于 `mail-backend/src/providers/`。
 - 根脚本负责 Windows 本机生命周期，Docker Compose 负责容器运行。
+- 正式版本使用 `dev/<version>`、`release/<version>`、`main` 和 `v<version>`；生产候选由两个 GHCR immutable digest 组成。
 - `backend/` 和 `ChatGPT_team.py` 是历史实现，不应作为新增 MailOps 功能的入口。
 
 ## 已实现能力
@@ -28,18 +29,19 @@ MailOps 的活动运行链路是 `frontend/ + mail-backend/`：
 
 ## 当前工作区上下文
 
-当前版本基线已包含 Microsoft Token、服务绑定、验证码收件台、网络错误恢复、页面布局和 Windows 生命周期相关改动及测试。工作区中的 SQLite 运行数据和浏览器临时产物不属于版本内容，不应提交。
+当前 `dev/001` 以原 `develop@ec4560b` 为起点，首版同时建立版本记录、候选镜像和生产部署门禁。工作区中的 SQLite 运行数据和浏览器临时产物不属于版本内容，不应提交。
 
 开始新任务前必须先运行 `git status --short` 和 `git diff --stat`，再阅读待改文件的现有 diff；不得因 Git 历史较旧而回滚用户改动。
 
 ## 最近验证基线
 
-2026-08-10 在当前工作区运行 `npm run validate` 已通过：
+2026-08-15 在当前 `dev/001` 工作区运行 `npm run validate` 已通过：
 
 - 后端 typecheck 和前端 lint 通过。
-- 后端 18/18 tests 通过。
+- 后端 19/19 tests 通过。
 - 前端 11/11 tests 通过，共 4 个 test files。
 - 前后端 production build 通过。
+- GitHub Actions YAML 结构解析通过；生产 Compose `config --quiet` 通过。
 
 上一轮还真实验证过页面停止、端口关闭、桌面快捷方式重启和启动窗口退出。任何新功能完成后仍需重新运行与改动范围匹配的检查；本基线不能替代后续验证。
 
@@ -47,6 +49,8 @@ MailOps 的活动运行链路是 `frontend/ + mail-backend/`：
 
 - 当前管理员模型是单用户，JWT 保存在浏览器 `localStorage`；共享或公网部署必须使用 HTTPS 和严格 CSP。
 - SQLite 面向单实例内部使用，多实例部署需要显式数据库迁移。
+- 生产部署使用 SQLite 备份后的短暂停机升级；当前架构不使用共享 SQLite 的双 backend 蓝绿发布。
+- 生产 Compose 默认限制 frontend 为 128 MiB、backend 为 768 MiB；服务器不执行候选镜像构建。
 - OAuth、refresh token 和发信依赖外部 provider，自动化测试使用 mock，不能替代真实账号冒烟。
 - Microsoft Token 批量导入是逐条串行处理，单条失败不影响后续；前端按每批 100 条提交，结果保留逐条明细，并可下载失败记录 JSON。
 - UI 批量粘贴接受 JSON 数组、JSON Lines，或以逗号、Tab、`|` 分隔的 `email, refreshToken, clientId, displayName, scope`；单次最多 1000 条。外部表格若为其他列序或 `----` 分隔，需先转换，不能直接粘贴。
@@ -57,8 +61,8 @@ MailOps 的活动运行链路是 `frontend/ + mail-backend/`：
 ## 新会话继续开发
 
 1. 阅读 `AGENTS.md` 和本文，确认任务属于活动应用。
-2. 运行 `git status --short`、`git diff --stat`，检查未提交改动和敏感运行文件。
+2. 运行 `git status --short`、`git diff --stat`，检查版本分支、未提交改动和敏感运行文件。
 3. 根据任务读取直接相关的页面、service、route、provider 和测试，不根据旧 Git commit 推断当前行为。
 4. 修改 API shape 时同步检查前端 service/types 和后端 route/service；修改 UI 时验证 desktop 与 390px mobile。
 5. 更新受影响的权威文档，运行 targeted checks；跨模块或关键流程改动运行 `npm run validate`。
-6. 最终说明实际验证、未验证的真实外部流程和剩余风险，不自动 commit 或 push。
+6. 涉及发版时按 `version-management.md` 的节点信号更新 `releases/<version>.md`；最终说明实际验证、未验证的真实外部流程和剩余风险，不自动 commit、push、tag 或部署。

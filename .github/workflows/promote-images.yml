@@ -1,0 +1,108 @@
+name: Promote Verified Images
+
+on:
+  workflow_dispatch:
+    inputs:
+      backend_digest:
+        description: "Verified ghcr.io/zeroliao/mail-backend@sha256:..."
+        required: true
+        type: string
+      frontend_digest:
+        description: "Verified ghcr.io/zeroliao/mail-frontend@sha256:..."
+        required: true
+        type: string
+      version:
+        description: "Version number, for example 001 or v001"
+        required: true
+        type: string
+      add_latest:
+        description: "Also update latest for convenience; production remains digest-pinned"
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  promote:
+    name: Promote verified digests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate inputs
+        id: inputs
+        shell: bash
+        run: |
+          version="${{ inputs.version }}"
+          version="${version#v}"
+          backend_digest="${{ inputs.backend_digest }}"
+          frontend_digest="${{ inputs.frontend_digest }}"
+          digest_pattern='@sha256:[0-9a-f]{64}$'
+
+          if [[ ! "$version" =~ ^[0-9]{3,}$ ]]; then
+            echo "version must contain at least three digits" >&2
+            exit 1
+          fi
+          if [[ ! "$backend_digest" =~ ^ghcr\.io/zeroliao/mail-backend${digest_pattern} ]]; then
+            echo "backend_digest is not an immutable mail-backend reference" >&2
+            exit 1
+          fi
+          if [[ ! "$frontend_digest" =~ ^ghcr\.io/zeroliao/mail-frontend${digest_pattern} ]]; then
+            echo "frontend_digest is not an immutable mail-frontend reference" >&2
+            exit 1
+          fi
+
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "backend_digest=${backend_digest}" >> "$GITHUB_OUTPUT"
+          echo "frontend_digest=${frontend_digest}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Promote backend digest
+        shell: bash
+        run: |
+          docker buildx imagetools create \
+            --tag "ghcr.io/zeroliao/mail-backend:v${{ steps.inputs.outputs.version }}" \
+            --tag "ghcr.io/zeroliao/mail-backend:${{ steps.inputs.outputs.version }}" \
+            "${{ steps.inputs.outputs.backend_digest }}"
+
+      - name: Promote frontend digest
+        shell: bash
+        run: |
+          docker buildx imagetools create \
+            --tag "ghcr.io/zeroliao/mail-frontend:v${{ steps.inputs.outputs.version }}" \
+            --tag "ghcr.io/zeroliao/mail-frontend:${{ steps.inputs.outputs.version }}" \
+            "${{ steps.inputs.outputs.frontend_digest }}"
+
+      - name: Optionally update latest
+        if: inputs.add_latest
+        shell: bash
+        run: |
+          docker buildx imagetools create \
+            --tag "ghcr.io/zeroliao/mail-backend:latest" \
+            "${{ steps.inputs.outputs.backend_digest }}"
+          docker buildx imagetools create \
+            --tag "ghcr.io/zeroliao/mail-frontend:latest" \
+            "${{ steps.inputs.outputs.frontend_digest }}"
+
+      - name: Summary
+        shell: bash
+        run: |
+          {
+            echo "### Verified MailOps images promoted"
+            echo
+            echo "- Version: \`v${{ steps.inputs.outputs.version }}\`"
+            echo "- Backend source: \`${{ steps.inputs.outputs.backend_digest }}\`"
+            echo "- Frontend source: \`${{ steps.inputs.outputs.frontend_digest }}\`"
+            echo
+            echo "No image was rebuilt. Production must remain pinned to the source digests."
+          } >> "$GITHUB_STEP_SUMMARY"

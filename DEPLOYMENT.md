@@ -5,6 +5,7 @@
 - `frontend/`: React + Vite application, served by Nginx in Docker
 - `mail-backend/`: Fastify + Prisma API
 - `docker-compose.yml`: frontend and backend services
+- `deploy/docker-compose.yml`: digest-pinned production services
 - `mail_data`: named Docker volume containing the SQLite database
 
 The legacy `backend/` directory is not part of the active runtime.
@@ -58,8 +59,20 @@ The backend uses `file:/data/dev.db`; the `mail_data` volume persists account an
 Back up the database before upgrades or destructive maintenance:
 
 ```bash
+docker compose stop backend
 docker compose cp backend:/data/dev.db ./mail-backup.db
+docker compose start backend
 ```
+
+The root Compose file is for local development and builds images on the current machine. Production releases use `deploy/docker-compose.yml` and the immutable backend/frontend digests recorded for the version. Do not build Vite or TypeScript images on the production server.
+
+Validate the production Compose input from the repository root:
+
+```bash
+docker compose --env-file deploy/images.env -f deploy/docker-compose.yml config
+```
+
+The complete numbered release and short-downtime deployment flow is documented in `docs/version-management.md` and `deploy/README.md`.
 
 ## Required Configuration
 
@@ -88,6 +101,9 @@ This runs backend type checking and tests, frontend lint and tests, then both pr
 - Current authentication is a single administrator account configured through environment variables.
 - JWTs are stored in browser `localStorage`; deploy only behind HTTPS and a restrictive Content Security Policy.
 - SQLite is appropriate for a single-instance internal deployment. Multi-instance or high-concurrency deployment requires a deliberate database migration, including a Prisma provider change and compatible migrations.
+- Production keeps one backend/SQLite writer. Back up SQLite before every upgrade; do not use a blue/green dual-backend rollout with the current database model.
+- The production Compose limits the frontend to 128 MiB and the backend to 768 MiB. Review host available memory before changing those limits.
+- Production images must use `@sha256:` references produced from `release/<version>`; mutable tags are not deployment inputs.
 - Terminate TLS at Nginx, a load balancer, or an ingress controller.
 - Keep `.env`, database files, and backups outside version control.
 - The UI shutdown endpoint is intentionally local-only. Use Docker Compose, a service manager, or the deployment platform to stop non-local instances.

@@ -1,0 +1,54 @@
+name: mailops
+
+services:
+  frontend:
+    image: ${MAILOPS_FRONTEND_IMAGE:?set MAILOPS_FRONTEND_IMAGE to an immutable digest}
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "${MAILOPS_BIND_HOST:-127.0.0.1}:${MAILOPS_FRONTEND_PORT:-15173}:80"
+    mem_limit: 128m
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "wget -qO- http://127.0.0.1/nginx-health >/dev/null || exit 1",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  backend:
+    image: ${MAILOPS_BACKEND_IMAGE:?set MAILOPS_BACKEND_IMAGE to an immutable digest}
+    restart: unless-stopped
+    env_file:
+      - path: ../.env
+        required: false
+    environment:
+      NODE_ENV: production
+      HOST: 0.0.0.0
+      PORT: 3000
+      DATABASE_URL: file:/data/dev.db
+      NODE_OPTIONS: --max-old-space-size=512
+    ports:
+      - "${MAILOPS_BIND_HOST:-127.0.0.1}:${MAILOPS_BACKEND_PORT:-13000}:3000"
+    volumes:
+      - mail_data:/data
+    mem_limit: 768m
+    stop_grace_period: 30s
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3000/api/v1/health').then((response) => { if (!response.ok) process.exit(1); }).catch(() => process.exit(1));"
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+volumes:
+  mail_data:

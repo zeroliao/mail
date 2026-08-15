@@ -1,0 +1,62 @@
+name: Release Archive
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Archive successful version
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate successful version record
+        id: version
+        shell: bash
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          version="${tag#v}"
+          record="docs/releases/${version}.md"
+
+          if [[ ! "$version" =~ ^[0-9]{3,}$ ]]; then
+            echo "release tag must use v<version>, for example v001" >&2
+            exit 1
+          fi
+          if [[ ! -f "$record" ]]; then
+            echo "missing version record: $record" >&2
+            exit 1
+          fi
+          if ! grep -Eq '^状态：成功[[:space:]]*$' "$record"; then
+            echo "version record must be marked 成功 before tagging" >&2
+            exit 1
+          fi
+
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "record=${record}" >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          gh release create "${GITHUB_REF_NAME}" \
+            --title "MailOps ${GITHUB_REF_NAME}" \
+            --notes-file "${{ steps.version.outputs.record }}"
+
+      - name: Summary
+        shell: bash
+        run: |
+          {
+            echo "### MailOps version archived"
+            echo
+            echo "- Tag: \`${GITHUB_REF_NAME}\`"
+            echo "- Record: \`${{ steps.version.outputs.record }}\`"
+            echo
+            echo "This workflow does not build or retag production images."
+          } >> "$GITHUB_STEP_SUMMARY"
