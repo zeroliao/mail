@@ -36,4 +36,6 @@ venv/
 .running-pids
 .runtime/
 output/
+.playwright-cli/
+failed-oauth-import-records*.json
 *.db

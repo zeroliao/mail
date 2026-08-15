@@ -42,19 +42,19 @@ Provider-specific token exchange, refresh, folder mapping and mail operations be
 
 ### Authorization Code OAuth
 
-Gmail and Microsoft authorization-code flows create a short-lived `OAuthState` record for anti-CSRF state and optional frontend redirect metadata. A successful callback upserts the account as `ACTIVE` and stores provider tokens encrypted.
+Gmail and Microsoft authorization-code flows create a short-lived `OAuthState` record for anti-CSRF state and optional frontend redirect metadata. A successful callback skips an already-bound account; otherwise it stores the new account as `ACTIVE` with provider tokens encrypted.
 
 ### Microsoft Public Client Refresh Token
 
 `POST /api/v1/accounts/bind-oauth` and `/bind-oauth/batch` accept a per-account `clientId` and `refreshToken`. The service:
 
-1. exchanges the refresh token without a client secret, using tenant `consumers` by default;
-2. calls Microsoft Graph `/me` to validate the connection and resolve the canonical profile;
-3. upserts by `(MICROSOFT, email)` as `ACTIVE`;
-4. encrypts the access token, refresh token and per-account client ID;
+1. skips an existing `(MICROSOFT, email)` account before credential validation;
+2. otherwise exchanges the refresh token without a client secret, using tenant `consumers` by default;
+3. calls Microsoft Graph `/me` to validate the connection and resolve the canonical profile, then checks that profile email again;
+4. creates or restores the new account as `ACTIVE`, encrypting the access token, refresh token and per-account client ID;
 5. records `metadata.authMethod = "oauth-refresh"`, tenant and public-client marker.
 
-When Microsoft rotates the refresh token, the returned value replaces the stored value. Batch imports run each item independently and return a per-item result.
+When Microsoft rotates the refresh token, the returned value is stored only for a newly added or restored account. Batch imports run each item independently and return success, skipped and failure counts with per-item results.
 
 ### IMAP / SMTP Password
 
@@ -71,9 +71,9 @@ Persistent statuses are:
 - `ERROR`: visible but requires intervention.
 - `ARCHIVED`: soft-deleted with `deletedAt` and excluded from normal lists.
 
-Successful OAuth/import and re-import set `ACTIVE`; delete sets `ARCHIVED`; re-import clears `deletedAt`. Token expiry alone does not change status. The account service lazily refreshes tokens before provider calls and retries a Microsoft mail request once after an authentication 401.
+Successful OAuth/import set `ACTIVE`; repeated imports of an active account are skipped, while re-importing a deleted account clears `deletedAt`. Delete sets `ARCHIVED`. Token expiry alone does not change status. The account service lazily refreshes tokens before provider calls and retries a Microsoft mail request once after an authentication 401.
 
-Account labels are normalized into `metadata.labels`: trim, remove empty values, deduplicate, cap at 12 labels, and cap input label length at 24 characters. Credential upserts preserve existing labels.
+Account labels are normalized into `metadata.labels`: trim, remove empty values, deduplicate, cap at 12 labels, and cap input label length at 24 characters. Account restoration preserves existing labels.
 
 ## Mail Model
 

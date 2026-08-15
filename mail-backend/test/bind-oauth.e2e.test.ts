@@ -10,6 +10,7 @@ function installMockFetch() {
   (global as any).fetch = async (input: any) => {
     const url = typeof input === "string" ? input : input.toString();
     if (url.includes("/oauth2/v2.0/token")) {
+      refreshTokenExchangeCount += 1;
       return new Response(
         JSON.stringify({
           access_token: "mock-access",
@@ -41,6 +42,7 @@ let app: FastifyInstance;
 let token: string;
 let testDbPath = "";
 let shutdownRequests = 0;
+let refreshTokenExchangeCount = 0;
 
 before(async () => {
   installMockFetch();
@@ -136,7 +138,7 @@ test("POST /api/v1/accounts/bind-oauth 成功绑定 mock 账号到隔离临时�
     url: "/api/v1/accounts/bind-oauth",
     headers: { authorization: `Bearer ${token}` },
     payload: {
-      email: mockEmail,
+      email: mockEmail.toUpperCase(),
       refreshToken: "owner-refresh",
       clientId: "owner-client",
     },
@@ -146,6 +148,24 @@ test("POST /api/v1/accounts/bind-oauth 成功绑定 mock 账号到隔离临时�
   assert.equal(body.status, "success");
   assert.equal(body.account.provider, "MICROSOFT");
   assert.equal(body.account.status, "ACTIVE");
+});
+
+test("POST /api/v1/accounts/bind-oauth 对已绑定账号跳过且不校验新凭据", async () => {
+  const exchangesBefore = refreshTokenExchangeCount;
+  const res = await app.inject({
+    method: "POST",
+    url: "/api/v1/accounts/bind-oauth",
+    headers: { authorization: `Bearer ${token}` },
+    payload: {
+      email: mockEmail.toUpperCase(),
+      refreshToken: "replacement-refresh-token",
+      clientId: "replacement-client-id",
+    },
+  });
+
+  assert.equal(res.statusCode, 200, res.body);
+  assert.equal(res.json().status, "skipped");
+  assert.equal(refreshTokenExchangeCount, exchangesBefore);
 });
 
 test("PUT /api/v1/accounts/:accountId/labels 可新增和复用账号标签", async () => {
@@ -188,7 +208,8 @@ test("PUT /api/v1/accounts/:accountId/labels 可新增和复用账号标签", as
   assert.equal(response.json().metadata.authMethod, "oauth-refresh");
 });
 
-test("POST /api/v1/accounts/bind-oauth/batch 返回逐条结果汇总", async () => {
+test("POST /api/v1/accounts/bind-oauth/batch 跳过已绑定账号并返回逐条结果", async () => {
+  const exchangesBefore = refreshTokenExchangeCount;
   const res = await app.inject({
     method: "POST",
     url: "/api/v1/accounts/bind-oauth/batch",
@@ -198,8 +219,11 @@ test("POST /api/v1/accounts/bind-oauth/batch 返回逐条结果汇总", async ()
   assert.equal(res.statusCode, 200, res.body);
   const body = res.json();
   assert.equal(body.total, 1);
-  assert.equal(body.success, 1);
-  assert.equal(body.results[0].status, "success");
+  assert.equal(body.success, 0);
+  assert.equal(body.skipped, 1);
+  assert.equal(body.failed, 0);
+  assert.equal(body.results[0].status, "skipped");
+  assert.equal(refreshTokenExchangeCount, exchangesBefore);
 
   const accountsResponse = await app.inject({
     method: "GET",
@@ -212,12 +236,12 @@ test("POST /api/v1/accounts/bind-oauth/batch 返回逐条结果汇总", async ()
   assert.deepEqual(
     account.labels,
     ["主账号", "客户"],
-    "重新绑定不应清除已有标签",
+    "跳过已绑定账号不应清除已有标签",
   );
   assert.deepEqual(
     account.serviceStatuses,
     { GitHub: "unavailable" },
-    "重新绑定不应清除服务收码异常标记",
+    "跳过已绑定账号不应清除服务收码异常标记",
   );
 });
 

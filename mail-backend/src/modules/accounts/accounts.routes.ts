@@ -306,20 +306,28 @@ export const accountsRoutes: FastifyPluginAsync = async (fastify) => {
     async (request) => {
       const body = bindCredentialsSchema.parse(request.body);
       const cryptoService = new CryptoService(env.TOKEN_ENCRYPTION_KEY);
+      const email = normalizeEmail(body.email);
+      const provider = detectProvider(email);
+      const existingAccount = await accountsService.findExistingAccount(
+        provider,
+        email,
+      );
+      if (existingAccount) {
+        return skippedAccountResponse(existingAccount);
+      }
 
       // 验证 IMAP 连接
       await verifyImapCredentials(
-        body.email,
+        email,
         body.password,
         body.imapHost,
         body.imapPort,
       );
 
       // 确定提供商
-      const provider = detectProvider(body.email);
-      const config = resolveImapConfig(body.email);
+      const config = resolveImapConfig(email);
       const existing = await prisma.account.findUnique({
-        where: { provider_email: { provider, email: body.email } },
+        where: { provider_email: { provider, email } },
         select: { metadata: true },
       });
       const metadata = mergeAccountMetadata(existing?.metadata, {
@@ -333,12 +341,12 @@ export const accountsRoutes: FastifyPluginAsync = async (fastify) => {
       // 存储账号（密码加密存储在 accessToken 字段）
       const account = await prisma.account.upsert({
         where: {
-          provider_email: { provider, email: body.email },
+          provider_email: { provider, email },
         },
         create: {
           provider,
-          email: body.email,
-          displayName: body.email.split("@")[0],
+          email,
+          displayName: email.split("@")[0],
           accessToken: cryptoService.encrypt(body.password),
           refreshToken: null,
           tokenType: "imap-password",
@@ -358,7 +366,7 @@ export const accountsRoutes: FastifyPluginAsync = async (fastify) => {
 
       return {
         status: "success",
-        message: `已绑定 ${body.email}`,
+        message: `已绑定 ${email}`,
         account: {
           id: account.id,
           email: account.email,
@@ -381,7 +389,7 @@ export const accountsRoutes: FastifyPluginAsync = async (fastify) => {
     },
     async (request) => {
       const body = bindOAuthSchema.parse(request.body);
-      const account = await accountsService.bindOAuthRefreshAccount({
+      const result = await accountsService.bindOAuthRefreshAccount({
         email: body.email,
         refreshToken: body.refreshToken,
         clientId: body.clientId,
@@ -392,14 +400,16 @@ export const accountsRoutes: FastifyPluginAsync = async (fastify) => {
       });
 
       return {
-        status: "success",
-        message: `已绑定 ${account.email}`,
+        status: result.skipped ? "skipped" : "success",
+        message: result.skipped
+          ? `账号 ${result.account.email} 已存在，已跳过`
+          : `已绑定 ${result.account.email}`,
         account: {
-          id: account.id,
-          email: account.email,
-          provider: account.provider,
-          status: account.status,
-          providerLabel: account.providerLabel,
+          id: result.account.id,
+          email: result.account.email,
+          provider: result.account.provider,
+          status: result.account.status,
+          providerLabel: result.account.providerLabel,
         },
       };
     },
@@ -447,24 +457,39 @@ export const accountsRoutes: FastifyPluginAsync = async (fastify) => {
 
       const results: Array<{
         email: string;
-        status: "success" | "failed";
+        status: "success" | "skipped" | "failed";
         message: string;
         accountId?: string;
       }> = [];
 
       for (const item of items) {
         try {
+          const email = normalizeEmail(item.email);
+          const provider = detectProvider(email);
+          const existingAccount = await accountsService.findExistingAccount(
+            provider,
+            email,
+          );
+          if (existingAccount) {
+            results.push({
+              email: existingAccount.email,
+              status: "skipped",
+              message: "账号已存在，已跳过",
+              accountId: existingAccount.id,
+            });
+            continue;
+          }
+
           await verifyImapCredentials(
-            item.email,
+            email,
             item.password,
             item.imapHost,
             item.imapPort,
           );
 
-          const provider = detectProvider(item.email);
-          const config = resolveImapConfig(item.email);
+          const config = resolveImapConfig(email);
           const existing = await prisma.account.findUnique({
-            where: { provider_email: { provider, email: item.email } },
+            where: { provider_email: { provider, email } },
             select: { metadata: true },
           });
           const metadata = mergeAccountMetadata(existing?.metadata, {
@@ -477,12 +502,12 @@ export const accountsRoutes: FastifyPluginAsync = async (fastify) => {
 
           const account = await prisma.account.upsert({
             where: {
-              provider_email: { provider, email: item.email },
+              provider_email: { provider, email },
             },
             create: {
               provider,
-              email: item.email,
-              displayName: item.email.split("@")[0],
+              email,
+              displayName: email.split("@")[0],
               accessToken: cryptoService.encrypt(item.password),
               refreshToken: null,
               tokenType: "imap-password",
@@ -501,7 +526,7 @@ export const accountsRoutes: FastifyPluginAsync = async (fastify) => {
           });
 
           results.push({
-            email: item.email,
+            email,
             status: "success",
             message: "绑定成功",
             accountId: account.id,
@@ -516,10 +541,12 @@ export const accountsRoutes: FastifyPluginAsync = async (fastify) => {
       }
 
       const successCount = results.filter((r) => r.status === "success").length;
+      const skippedCount = results.filter((r) => r.status === "skipped").length;
       return {
         total: items.length,
         success: successCount,
-        failed: items.length - successCount,
+        skipped: skippedCount,
+        failed: items.length - successCount - skippedCount,
         results,
       };
     },
@@ -534,13 +561,33 @@ function detectProvider(email: string): MailProvider {
   return MailProvider.MICROSOFT;
 }
 
+const normalizeEmail = (email: string) => email.trim().toLowerCase();
+
+const skippedAccountResponse = (account: {
+  id: string;
+  email: string;
+  provider: MailProvider;
+  status: string;
+}) => ({
+  status: "skipped",
+  message: `账号 ${account.email} 已存在，已跳过`,
+  account,
+});
+
 const handleCallbackReply = (
   reply: any,
-  result: { account: unknown; frontendRedirectUri: string | null },
+  result: {
+    account: unknown;
+    skipped: boolean;
+    frontendRedirectUri: string | null;
+  },
 ) => {
   if (result.frontendRedirectUri) {
     const redirectUrl = new URL(result.frontendRedirectUri);
-    redirectUrl.searchParams.set("status", "success");
+    redirectUrl.searchParams.set(
+      "status",
+      result.skipped ? "skipped" : "success",
+    );
     reply.redirect(redirectUrl.toString());
     return reply;
   }

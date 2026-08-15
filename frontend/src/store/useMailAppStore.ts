@@ -79,7 +79,7 @@ type MailAppStore = {
   bindCredentials: (
     email: string,
     password: string,
-  ) => Promise<{ message: string }>;
+  ) => Promise<{ message: string; status: "success" | "skipped" }>;
   bindOAuthAccount: (
     payload: BindOAuthPayload,
   ) => Promise<BindOAuthAccountResponse>;
@@ -608,7 +608,7 @@ export const useMailAppStore = create<MailAppStore>((set, get) => {
       try {
         const result = await mailApi.bindCredentials(email, password);
         await reloadAccounts();
-        return { message: result.message };
+        return { message: result.message, status: result.status };
       } finally {
         set({ isBindingAccount: false });
       }
@@ -628,11 +628,28 @@ export const useMailAppStore = create<MailAppStore>((set, get) => {
     bindOAuthAccounts: async (payload) => {
       set({ isBindingAccount: true });
       try {
-        const result = await mailApi.bindOAuthAccounts(payload);
-        if (result.success > 0) {
+        const aggregate: BindOAuthBatchResponse = {
+          total: payload.length,
+          success: 0,
+          skipped: 0,
+          failed: 0,
+          results: [],
+        };
+
+        for (let index = 0; index < payload.length; index += 100) {
+          const result = await mailApi.bindOAuthAccounts(
+            payload.slice(index, index + 100),
+          );
+          aggregate.success += result.success;
+          aggregate.skipped += result.skipped;
+          aggregate.failed += result.failed;
+          aggregate.results.push(...result.results);
+        }
+
+        if (aggregate.success > 0) {
           await reloadAccounts();
         }
-        return result;
+        return aggregate;
       } finally {
         set({ isBindingAccount: false });
       }

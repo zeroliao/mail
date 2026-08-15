@@ -5,6 +5,7 @@ import relativeTime from "dayjs/plugin/relativeTime";
 import {
   ArrowRightOutlined,
   CheckCircleFilled,
+  DownloadOutlined,
   GoogleOutlined,
   KeyOutlined,
   LockOutlined,
@@ -140,6 +141,39 @@ const normalizeBatchPayload = (
 };
 
 const parseBatchRecords = (input: string): BindOAuthPayload[] => {
+  const trimmedInput = input.trim();
+  if (trimmedInput.startsWith("[")) {
+    try {
+      const parsed = JSON.parse(trimmedInput) as unknown;
+      if (!Array.isArray(parsed)) {
+        throw new Error("批量 JSON 必须是账号记录数组。");
+      }
+
+      if (!parsed.length) {
+        throw new Error("请至少提供一条账号记录。");
+      }
+
+      if (parsed.length > 1000) {
+        throw new Error("单次最多导入 1000 条账号记录。");
+      }
+
+      return parsed.map((item, index) => {
+        if (!item || typeof item !== "object" || Array.isArray(item)) {
+          throw new Error(`第 ${index + 1} 条 JSON 记录格式不正确。`);
+        }
+        return normalizeBatchPayload(
+          item as Record<string, unknown>,
+          index + 1,
+        );
+      });
+    } catch (error) {
+      if (error instanceof Error) {
+        throw error;
+      }
+      throw new Error("批量 JSON 解析失败。");
+    }
+  }
+
   const lines = input
     .split(/\r?\n/)
     .map((line) => line.trim())
@@ -149,8 +183,8 @@ const parseBatchRecords = (input: string): BindOAuthPayload[] => {
     throw new Error("请至少粘贴一条账号记录。");
   }
 
-  if (lines.length > 100) {
-    throw new Error("单次最多导入 100 条账号记录。");
+  if (lines.length > 1000) {
+    throw new Error("单次最多导入 1000 条账号记录。");
   }
 
   return lines.map((line, index) => {
@@ -237,9 +271,12 @@ export default function AuthBindingPage() {
   const [batchResult, setBatchResult] = useState<BindOAuthBatchResponse | null>(
     null,
   );
+  const [batchPayload, setBatchPayload] = useState<BindOAuthPayload[]>([]);
   const [singleError, setSingleError] = useState<unknown>(null);
   const [batchError, setBatchError] = useState<unknown>(null);
   const [advancedScopeOpen, setAdvancedScopeOpen] = useState(false);
+  const [boundAccountsPage, setBoundAccountsPage] = useState(1);
+  const [boundAccountsPageSize, setBoundAccountsPageSize] = useState(8);
   const providerConfig = useMailAppStore((state) => state.providerConfig);
   const accounts = useMailAppStore((state) => state.accounts);
   const isAuthenticated = useMailAppStore((state) => state.isAuthenticated);
@@ -280,7 +317,11 @@ export default function AuthBindingPage() {
 
     try {
       const result = await bindCredentials(imapEmail.trim(), imapPassword);
-      message.success(result.message);
+      if (result.status === "skipped") {
+        message.info(result.message);
+      } else {
+        message.success(result.message);
+      }
       setImapEmail("");
       setImapPassword("");
     } catch (error) {
@@ -304,7 +345,11 @@ export default function AuthBindingPage() {
       const result = await bindOAuthAccount(payload);
       setSingleResult(result);
       singleForm.setFieldValue("refreshToken", "");
-      message.success(result.message);
+      if (result.status === "skipped") {
+        message.info(result.message);
+      } else {
+        message.success(result.message);
+      }
     } catch (error) {
       if (isFormValidationError(error)) {
         return;
@@ -321,15 +366,17 @@ export default function AuthBindingPage() {
       const payload = parseBatchRecords(values.records);
       setBatchError(null);
       setBatchResult(null);
+      setBatchPayload(payload);
       const result = await bindOAuthAccounts(payload);
       setBatchResult(result);
 
+      const summary = `批量导入完成：共 ${result.total} 条，成功 ${result.success} 条，已跳过 ${result.skipped} 条，失败 ${result.failed} 条`;
       if (result.failed > 0) {
-        message.warning(
-          `批量导入完成：成功 ${result.success} / ${result.total}`,
-        );
+        message.warning(summary);
+      } else if (result.skipped > 0) {
+        message.info(summary);
       } else {
-        message.success(`批量导入完成：共 ${result.total} 条，全部成功`);
+        message.success(summary);
       }
     } catch (error) {
       if (isFormValidationError(error)) {
@@ -339,6 +386,33 @@ export default function AuthBindingPage() {
       setBatchError(error);
       message.error(getApiErrorMessage(error, "批量导入失败"));
     }
+  };
+
+  const downloadFailedBatchRecords = () => {
+    if (!batchResult) {
+      return;
+    }
+
+    const failedRecords = batchResult.results.flatMap((result, index) =>
+      result.status === "failed" && batchPayload[index]
+        ? [batchPayload[index]]
+        : [],
+    );
+    if (!failedRecords.length) {
+      return;
+    }
+
+    const blob = new Blob([JSON.stringify(failedRecords, null, 2)], {
+      type: "application/json;charset=utf-8",
+    });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "failed-oauth-import-records.json";
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
   };
 
   return (
@@ -518,19 +592,35 @@ export default function AuthBindingPage() {
 
                       {singleResult ? (
                         <Alert
-                          message="导入成功"
+                          message={
+                            singleResult.status === "skipped"
+                              ? "账号已存在，已跳过"
+                              : "导入成功"
+                          }
                           description={
                             <Space wrap>
                               <Typography.Text strong>
                                 {singleResult.account.email}
                               </Typography.Text>
-                              <Tag color="success">
-                                {singleResult.account.status}
+                              <Tag
+                                color={
+                                  singleResult.status === "skipped"
+                                    ? "processing"
+                                    : "success"
+                                }
+                              >
+                                {singleResult.status === "skipped"
+                                  ? "已跳过"
+                                  : singleResult.account.status}
                               </Tag>
                             </Space>
                           }
                           showIcon
-                          type="success"
+                          type={
+                            singleResult.status === "skipped"
+                              ? "info"
+                              : "success"
+                          }
                         />
                       ) : null}
 
@@ -638,9 +728,33 @@ export default function AuthBindingPage() {
 
                       {batchResult ? (
                         <Alert
-                          message={`批量导入完成：共 ${batchResult.total} 条，成功 ${batchResult.success} 条，失败 ${batchResult.failed} 条`}
+                          message={
+                            <Space wrap>
+                              <span>
+                                批量导入完成：共 {batchResult.total} 条，成功{" "}
+                                {batchResult.success} 条，已跳过{" "}
+                                {batchResult.skipped} 条，失败{" "}
+                                {batchResult.failed} 条
+                              </span>
+                              {batchResult.failed > 0 ? (
+                                <Button
+                                  size="small"
+                                  icon={<DownloadOutlined />}
+                                  onClick={downloadFailedBatchRecords}
+                                >
+                                  下载失败数据 JSON
+                                </Button>
+                              ) : null}
+                            </Space>
+                          }
                           showIcon
-                          type={batchResult.failed > 0 ? "warning" : "success"}
+                          type={
+                            batchResult.failed > 0
+                              ? "warning"
+                              : batchResult.skipped > 0
+                                ? "info"
+                                : "success"
+                          }
                         />
                       ) : null}
 
@@ -652,6 +766,7 @@ export default function AuthBindingPage() {
                         <Form.Item
                           label="账号记录"
                           name="records"
+                          extra="支持 JSON 数组、逐行 JSON，或逗号 / 制表符分隔格式；超过 100 条时会自动分批提交。"
                           rules={[
                             { required: true, message: "请粘贴账号记录" },
                           ]}
@@ -659,6 +774,7 @@ export default function AuthBindingPage() {
                           <Input.TextArea
                             autoSize={{ minRows: 8, maxRows: 16 }}
                             placeholder={[
+                              '[{"email":"owner@outlook.com","refreshToken":"xxx","clientId":"xxx"}]',
                               '{"email":"owner@outlook.com","refreshToken":"xxx","clientId":"xxx"}',
                               "owner1@outlook.com,refresh-token-1,client-id-1",
                               "owner2@outlook.com,refresh-token-2,client-id-2,Owner 2,https://graph.microsoft.com/Mail.ReadWrite https://graph.microsoft.com/Mail.Send https://graph.microsoft.com/User.Read offline_access",
@@ -689,10 +805,16 @@ export default function AuthBindingPage() {
                                   color={
                                     item.status === "success"
                                       ? "success"
-                                      : "error"
+                                      : item.status === "skipped"
+                                        ? "processing"
+                                        : "error"
                                   }
                                 >
-                                  {item.status}
+                                  {item.status === "success"
+                                    ? "成功"
+                                    : item.status === "skipped"
+                                      ? "已跳过"
+                                      : "失败"}
                                 </Tag>,
                               ]}
                             >
@@ -704,7 +826,7 @@ export default function AuthBindingPage() {
                                 }
                                 description={
                                   item.status === "success"
-                                    ? `accountId: ${item.accountId ?? "未返回"}`
+                                    ? `${item.message} · accountId: ${item.accountId ?? "未返回"}`
                                     : item.message
                                 }
                               />
@@ -809,8 +931,24 @@ export default function AuthBindingPage() {
               className="bound-account-list"
               dataSource={accounts}
               pagination={
-                accounts.length > 8
-                  ? { pageSize: 8, showSizeChanger: false, size: "small" }
+                accounts.length
+                  ? {
+                      current: boundAccountsPage,
+                      pageSize: boundAccountsPageSize,
+                      pageSizeOptions: ["8", "16", "32", "64"],
+                      showLessItems: true,
+                      showSizeChanger: true,
+                      showTotal: (total) => `共 ${total} 个账号`,
+                      size: "small",
+                      onChange: (page, pageSize) => {
+                        if (pageSize !== boundAccountsPageSize) {
+                          setBoundAccountsPageSize(pageSize);
+                          setBoundAccountsPage(1);
+                          return;
+                        }
+                        setBoundAccountsPage(page);
+                      },
+                    }
                   : false
               }
               locale={{

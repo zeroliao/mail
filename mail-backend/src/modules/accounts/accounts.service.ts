@@ -48,7 +48,7 @@ type BindOAuthRefreshInput = {
 
 type BindOAuthResult = {
   email: string;
-  status: "success" | "failed";
+  status: "success" | "skipped" | "failed";
   message: string;
   accountId?: string;
 };
@@ -82,12 +82,27 @@ export class AccountsService {
     return withProviderPresentation(account);
   }
 
+  async findExistingAccount(provider: MailProvider, email: string) {
+    const account = await prisma.account.findFirst({
+      where: { provider, email, deletedAt: null },
+      select: publicAccountSelect,
+    });
+
+    return account ? withProviderPresentation(account) : null;
+  }
+
   async createImportedAccount(input: CreateImportedAccountInput) {
+    const email = normalizeEmail(input.email);
+    const activeAccount = await this.findExistingAccount(input.provider, email);
+    if (activeAccount) {
+      return activeAccount;
+    }
+
     const existing = await prisma.account.findUnique({
       where: {
         provider_email: {
           provider: input.provider,
-          email: input.email,
+          email,
         },
       },
       select: { metadata: true },
@@ -98,12 +113,12 @@ export class AccountsService {
       where: {
         provider_email: {
           provider: input.provider,
-          email: input.email,
+          email,
         },
       },
       create: {
         provider: input.provider,
-        email: input.email,
+        email,
         displayName: input.displayName ?? null,
         accessToken: this.cryptoService.encrypt(input.accessToken),
         refreshToken: input.refreshToken
@@ -146,6 +161,15 @@ export class AccountsService {
       throw new AppError("Microsoft provider is not available", 500);
     }
 
+    const requestedEmail = normalizeEmail(input.email);
+    const existingRequestedAccount = await this.findExistingAccount(
+      MailProvider.MICROSOFT,
+      requestedEmail,
+    );
+    if (existingRequestedAccount) {
+      return { account: existingRequestedAccount, skipped: true };
+    }
+
     const scope =
       input.scope && input.scope.length > 0
         ? input.scope
@@ -162,14 +186,22 @@ export class AccountsService {
       });
 
     // 优先使用微软返回的 profile email；owner 传入的 email 仅作兜底/校验展示。
-    const email = exchange.profile.email || input.email;
+    const email = normalizeEmail(exchange.profile.email || requestedEmail);
     const displayName =
       input.displayName ?? exchange.profile.displayName ?? null;
 
     // refresh_token：优先用微软轮换后返回的新值，否则保留入参。
     const refreshTokenToStore = exchange.refreshToken ?? input.refreshToken;
 
-    const existing = await prisma.account.findUnique({
+    const existingAccount = await this.findExistingAccount(
+      MailProvider.MICROSOFT,
+      email,
+    );
+    if (existingAccount) {
+      return { account: existingAccount, skipped: true };
+    }
+
+    const archivedAccount = await prisma.account.findUnique({
       where: {
         provider_email: {
           provider: MailProvider.MICROSOFT,
@@ -179,7 +211,7 @@ export class AccountsService {
       select: { metadata: true },
     });
     const metadata: Prisma.JsonValue = mergeAccountMetadata(
-      existing?.metadata,
+      archivedAccount?.metadata,
       {
         authMethod: OAUTH_REFRESH_AUTH_METHOD,
         clientId: this.cryptoService.encrypt(input.clientId),
@@ -222,13 +254,14 @@ export class AccountsService {
       select: publicAccountSelect,
     });
 
-    return withProviderPresentation(account);
+    return { account: withProviderPresentation(account), skipped: false };
   }
 
   // 批量绑定：逐个执行，单条失败不影响其余，返回每条结果。
   async bindOAuthRefreshAccounts(items: BindOAuthRefreshInput[]): Promise<{
     total: number;
     success: number;
+    skipped: number;
     failed: number;
     results: BindOAuthResult[];
   }> {
@@ -236,12 +269,12 @@ export class AccountsService {
 
     for (const item of items) {
       try {
-        const account = await this.bindOAuthRefreshAccount(item);
+        const result = await this.bindOAuthRefreshAccount(item);
         results.push({
-          email: account.email,
-          status: "success",
-          message: "绑定成功",
-          accountId: account.id,
+          email: result.account.email,
+          status: result.skipped ? "skipped" : "success",
+          message: result.skipped ? "账号已存在，已跳过" : "绑定成功",
+          accountId: result.account.id,
         });
       } catch (error: any) {
         const message =
@@ -253,10 +286,12 @@ export class AccountsService {
     }
 
     const success = results.filter((r) => r.status === "success").length;
+    const skipped = results.filter((r) => r.status === "skipped").length;
     return {
       total: items.length,
       success,
-      failed: items.length - success,
+      skipped,
+      failed: items.length - success - skipped,
       results,
     };
   }
@@ -363,7 +398,7 @@ export class AccountsService {
 
     const providerService = providerRegistry.get(provider);
     const exchange = await providerService.exchangeCode(code);
-    const account = await this.upsertOAuthAccount(
+    const result = await this.upsertOAuthAccount(
       provider,
       exchange.profile.email,
       exchange.profile.displayName ?? null,
@@ -373,7 +408,8 @@ export class AccountsService {
     await prisma.oAuthState.delete({ where: { state } });
 
     return {
-      account: withProviderPresentation(account),
+      account: result.account,
+      skipped: result.skipped,
       frontendRedirectUri: readFrontendRedirectUri(stateRecord.metadata),
     };
   }
@@ -459,16 +495,25 @@ export class AccountsService {
     displayName: string | null,
     tokens: OAuthTokens,
   ) {
+    const normalizedEmail = normalizeEmail(email);
+    const activeAccount = await this.findExistingAccount(
+      provider,
+      normalizedEmail,
+    );
+    if (activeAccount) {
+      return { account: activeAccount, skipped: true };
+    }
+
     const account = await prisma.account.upsert({
       where: {
         provider_email: {
           provider,
-          email,
+          email: normalizedEmail,
         },
       },
       create: {
         provider,
-        email,
+        email: normalizedEmail,
         displayName,
         accessToken: this.cryptoService.encrypt(tokens.accessToken),
         refreshToken: tokens.refreshToken
@@ -493,7 +538,7 @@ export class AccountsService {
       select: publicAccountSelect,
     });
 
-    return withProviderPresentation(account);
+    return { account: withProviderPresentation(account), skipped: false };
   }
 
   private async persistTokenRefresh(accountId: string, tokens: OAuthTokens) {
@@ -538,6 +583,8 @@ const publicAccountSelect = {
   createdAt: true,
   updatedAt: true,
 } satisfies Prisma.AccountSelect;
+
+const normalizeEmail = (email: string) => email.trim().toLowerCase();
 
 const readFrontendRedirectUri = (
   value: Prisma.JsonValue | null,

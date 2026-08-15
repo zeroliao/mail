@@ -101,7 +101,7 @@ export type BindOAuthPayload = {
 };
 
 export type BindOAuthAccountResponse = {
-  status: string;
+  status: "success" | "skipped";
   message: string;
   account: {
     id: string;
@@ -114,7 +114,7 @@ export type BindOAuthAccountResponse = {
 
 export type BindOAuthBatchResult = {
   email: string;
-  status: "success" | "failed";
+  status: "success" | "skipped" | "failed";
   message: string;
   accountId?: string;
 };
@@ -122,6 +122,7 @@ export type BindOAuthBatchResult = {
 export type BindOAuthBatchResponse = {
   total: number;
   success: number;
+  skipped: number;
   failed: number;
   results: BindOAuthBatchResult[];
 };

@@ -18,6 +18,9 @@ import type {
   SendMailPayload,
 } from "../types/mail";
 
+const getOAuthBatchImportTimeout = (recordCount: number) =>
+  Math.max(30_000, recordCount * 3_000);
+
 type BackendAccount = {
   id: string;
   provider: "GOOGLE" | "MICROSOFT";
@@ -229,7 +232,7 @@ export const mailApi = {
   // IMAP 密码直连绑定
   async bindCredentials(email: string, password: string) {
     const response = await apiClient.post<{
-      status: string;
+      status: "success" | "skipped";
       message: string;
       account: { id: string; email: string };
     }>("/accounts/bind-credentials", {
@@ -255,6 +258,7 @@ export const mailApi = {
     const response = await apiClient.post<BindOAuthBatchResponse>(
       "/accounts/bind-oauth/batch",
       payload,
+      { timeout: getOAuthBatchImportTimeout(payload.length) },
     );
     return response.data;
   },

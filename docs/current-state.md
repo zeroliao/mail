@@ -1,6 +1,6 @@
 # 当前开发状态
 
-更新时间：2026-08-10
+更新时间：2026-08-15
 
 本文是新会话的动态交接入口。稳定规则以 `../AGENTS.md` 为准，用户行为以 `usage-guide.md` 为准，测试要求以 `testing.md` 为准。
 
@@ -17,8 +17,8 @@ MailOps 的活动运行链路是 `frontend/ + mail-backend/`：
 
 - 管理员 JWT 登录和受保护 API。
 - Gmail、Microsoft OAuth 授权，以及 Gmail/Microsoft/IMAP 邮件读写。
-- Microsoft public client 的 `refresh_token + client_id` 单条和最多 100 条批量导入；导入前会向 Microsoft 换取 access token 并读取 `/me` 验证连通性。
-- 账号以 `(provider, email)` 唯一，重复导入执行 upsert，恢复已归档账号并保留已有标签。
+- Microsoft public client 的 `refresh_token + client_id` 单条和批量导入；前端支持 JSON 数组并按 100 条自动分批提交，新账号会向 Microsoft 换取 access token 并读取 `/me` 验证连通性。批量完成后可一键下载失败记录 JSON 并再次导入。
+- 账号以 `(provider, email)` 唯一。再次添加已绑定账号会跳过且不改写凭据；已归档账号可重新导入并保留已有标签。
 - 服务绑定存于 `Account.metadata.labels` 和 `Account.metadata.serviceNotes`；收件箱和服务管理页按服务查看可用邮箱，并可记录服务账号备注。
 - 服务管理页支持面向注册场景的“找未使用邮箱”：输入服务名称后仅列出连接正常、尚未绑定且没有收码异常标记的邮箱；支持复制邮箱地址、标记注册完成，以及把长期收不到验证码的邮箱单独标记和恢复。
 - 验证码收件台以服务目录为主入口，支持服务/邮箱范围切换、文本搜索、未读/验证码/星标筛选、邮件详情和验证码复制；撰写/回复/转发保留为低频能力。
@@ -48,8 +48,8 @@ MailOps 的活动运行链路是 `frontend/ + mail-backend/`：
 - 当前管理员模型是单用户，JWT 保存在浏览器 `localStorage`；共享或公网部署必须使用 HTTPS 和严格 CSP。
 - SQLite 面向单实例内部使用，多实例部署需要显式数据库迁移。
 - OAuth、refresh token 和发信依赖外部 provider，自动化测试使用 mock，不能替代真实账号冒烟。
-- Microsoft Token 批量导入是逐条串行处理，单条失败不影响后续；结果必须查看逐条明细。
-- UI 批量粘贴目前接受 JSON Lines，或以逗号、Tab、`|` 分隔的 `email, refreshToken, clientId, displayName, scope`。外部表格若为其他列序或 `----` 分隔，需先转换，不能直接粘贴。
+- Microsoft Token 批量导入是逐条串行处理，单条失败不影响后续；前端按每批 100 条提交，结果保留逐条明细，并可下载失败记录 JSON。
+- UI 批量粘贴接受 JSON 数组、JSON Lines，或以逗号、Tab、`|` 分隔的 `email, refreshToken, clientId, displayName, scope`；单次最多 1000 条。外部表格若为其他列序或 `----` 分隔，需先转换，不能直接粘贴。
 - 页面停止服务只支持通过 Windows 本机启动器运行的场景；容器和远程部署应使用各自的进程管理方式。
 - 当前 frontend production build 的主 JS bundle 约 1.25 MB，Vite 会给出超过 500 kB 的警告；不阻塞本机使用，但后续页面继续增长时应考虑 route/component code splitting。
 - Microsoft OAuth/Graph 网络不可达时后端返回 502，收件箱结束 loading、保留已有邮件并提供重试提示；单账号切换会先完成当前列表，再读取文件夹计数，避免并发触发多次 token 刷新。

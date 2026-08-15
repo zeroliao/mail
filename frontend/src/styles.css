@@ -1933,6 +1933,16 @@ a:focus-visible,
   .auth-onboarding-panel {
     padding: 16px;
   }
+
+  .bound-account-list .ant-pagination {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .bound-account-list .ant-pagination .ant-pagination-options {
+    display: inline-flex;
+    margin-inline-start: 0;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {

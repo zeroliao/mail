@@ -34,12 +34,13 @@ npm start
 
 提交时后端先用 refresh token 换取 access token，再调用 Microsoft Graph `/me` 验证账号。验证成功后才保存为 `ACTIVE`；provider 返回的邮箱优先于输入邮箱。
 
-批量导入每次最多 100 条，支持：
+批量导入支持最多 1000 条记录，前端会按接口上限每 100 条自动分批提交，支持：
 
+- 一个 JSON 数组，如 `[{"email":"owner@outlook.com","refreshToken":"...","clientId":"..."}]`
 - 每行一个 JSON object，如 `{"email":"owner@outlook.com","refreshToken":"...","clientId":"..."}`
 - 每行按 `email, refreshToken, clientId, displayName, scope` 排列，分隔符可用逗号、Tab 或 `|`
 
-批量任务逐条串行执行，单条失败不会中止后续账号。完成后查看成功、失败数量和逐条错误明细。
+批量任务逐条串行执行，单条失败不会中止后续账号。完成后查看成功、失败数量和逐条错误明细；存在失败记录时，可点击“下载失败数据 JSON”，下载的数组可直接再次粘贴导入。
 
 外部数据若为 `邮箱----密码----client_id----refresh_token`，不能原样粘贴到当前 UI：需要转换为上述列序和分隔符。Token 直连不依赖邮箱密码；不要为了兼容表格格式在 UI 中保存无用密码。
 
@@ -79,6 +80,12 @@ npm start
 - 服务绑定仍存于账号 `metadata.labels`，备注存于 `metadata.serviceNotes`，收码异常存于 `metadata.serviceStatuses`；刷新页面和重复导入账号时都会保留。
 
 旧账号标签会继续作为服务名称使用，无需迁移数据。
+
+## 添加邮箱账号
+
+- 通过 OAuth、Microsoft Token 单条/批量导入或 IMAP/SMTP 密码直连添加时，系统会先检查同一提供商下的邮箱账号。
+- 已绑定的账号会返回“已跳过”，不会再次校验或覆盖已有凭据；批量导入会分别统计成功、跳过和失败数量。
+- “已绑定账号”列表可在分页控件中选择每页显示 8、16、32 或 64 个账号。
 
 ## 收件箱与邮件
 
