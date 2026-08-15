@@ -51,7 +51,7 @@ MailOps 的活动运行链路是 `frontend/ + mail-backend/`：
 
 上一轮还真实验证过页面停止、端口关闭、桌面快捷方式重启和启动窗口退出。任何新功能完成后仍需重新运行与改动范围匹配的检查；本基线不能替代后续验证。
 
-2026-08-16 在 `dev/002` 对发布门禁改动完成本地检查：backend typecheck、frontend lint、backend 19/19 tests、frontend 11/11 tests、双端 production build、smoke shell syntax 和 local/production Compose config 均通过。Vite 仍报告约 1.26 MB 主 bundle warning。本机 Docker daemon 未运行，新增的 backend production image runtime smoke 需要由 GitHub CI 实际执行后才能视为验证完成。
+2026-08-16 在 `dev/002` 对发布门禁改动完成本地检查：backend typecheck、frontend lint、backend 19/19 tests、frontend 11/11 tests、双端 production build、smoke shell syntax 和 local/production Compose config 均通过。Vite 仍报告约 1.26 MB 主 bundle warning。本机 Docker daemon 未运行；GitHub CI run `31896969466` 已在 Linux runner 成功完成 Docker build 和 backend production image runtime smoke，Prisma generate 无 OpenSSL detection warning。
 
 ## 已知边界与风险
 
